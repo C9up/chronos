@@ -22,17 +22,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 5-platform NAPI matrix (Story 52.1). chronos's `package.json` declares
-  # `@c9up/atlas: workspace:*` in devDependencies (used only by
-  # `tests/integration/chronos-atlas-smoke.test.ts`). A standalone
-  # `pnpm install` in chronos's submodule repo crashes on the workspace
-  # protocol because there's no parent workspace and `@c9up/*` aren't on
-  # npm yet. Mitigation (mirrors warden 40.4 cross-package smoke gate):
-  # synthesize a minimal pnpm workspace stub on the runner with chronos +
-  # atlas as workspace members so the protocol resolves. The matrix vitest
-  # runs `--run tests/unit` (excludes the integration smoke test that
-  # imports atlas at runtime) so the matrix proves the NAPI binary works
-  # cross-platform without needing atlas's NAPI also built per-platform.
+  # 5-platform NAPI matrix (Story 52.1). chronos is fully self-contained: its
+  # runtime and test suite have zero @c9up dependencies (it ships an optional
+  # `dateTimeAtlasAdapter` built on its OWN DateTime — atlas consumes chronos,
+  # not the reverse). So it builds and tests standalone — no workspace stub,
+  # no sibling checkout. Each platform builds chronos's own Rust binary, runs
+  # the full vitest suite against it, and asserts zero skipped tests.
   build-and-test:
     name: Build & test (${{ matrix.suffix }})
     runs-on: ${{ matrix.os }}
@@ -45,66 +40,38 @@ jobs:
           - { os: macos-13,         suffix: darwin-x64 }
           - { os: macos-14,         suffix: darwin-arm64 }
           - { os: windows-latest,   suffix: win32-x64-msvc }
-    defaults:
-      run:
-        working-directory: ws
     steps:
-      - name: Checkout chronos into workspace stub
-        uses: actions/checkout@v4
-        with:
-          path: ws/packages/chronos
-
-      # Sibling clone of atlas's standalone repo. If atlas is private,
-      # provision a PAT scoped to C9up/atlas read access.
-      - name: Checkout atlas into workspace stub
-        uses: actions/checkout@v4
-        with:
-          repository: C9up/atlas
-          path: ws/packages/atlas
-          ref: main
-
-      # Synthesize a pnpm-workspace.yaml so `workspace:*` resolves locally.
-      - name: Synthesize workspace root
-        shell: bash
-        run: |
-          cat > pnpm-workspace.yaml <<'EOF'
-          packages:
-            - "packages/*"
-          EOF
-          cat > package.json <<'EOF'
-          { "name": "ream-dev-ci-stub", "private": true }
-          EOF
-
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build NAPI binary
-        run: pnpm --filter @c9up/chronos build:napi
+        run: pnpm build:napi
 
-      - name: Vitest (unit only — integration imports atlas at runtime)
-        run: pnpm --filter @c9up/chronos test --run tests/unit --reporter=json --outputFile=test-results.json
+      - name: Vitest (JSON reporter)
+        run: pnpm exec vitest run --reporter=json --outputFile=test-results.json
         shell: bash
 
       - name: Smoke gate — tests ran AND zero skipped (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
-          if [ ! -f packages/chronos/test-results.json ]; then
+          if [ ! -f test-results.json ]; then
             echo "::error::test-results.json not produced — pnpm test failed before writing"
             exit 1
           fi
-          total=$(jq '[.testResults[].assertionResults[]] | length' packages/chronos/test-results.json)
+          total=$(jq '[.testResults[].assertionResults[]] | length' test-results.json)
           if [ "$total" -eq 0 ]; then
             echo "::error::0 tests ran — test discovery is broken (check vitest include glob)"
             exit 1
           fi
-          skipped=$(jq '[.testResults[].assertionResults[] | select(.status=="skipped")] | length' packages/chronos/test-results.json)
+          skipped=$(jq '[.testResults[].assertionResults[] | select(.status=="skipped")] | length' test-results.json)
           if [ "$skipped" -ne 0 ]; then
             echo "::error::$skipped tests skipped — check NAPI binary load path"
             exit 1
@@ -114,7 +81,7 @@ jobs:
       - name: Smoke gate — tests ran AND zero skipped (Windows)
         if: runner.os == 'Windows'
         run: |
-          $path = "packages/chronos/test-results.json"
+          $path = "test-results.json"
           if (-not (Test-Path $path)) {
             Write-Error "test-results.json not produced — pnpm test failed before writing"
             exit 1
@@ -132,17 +99,17 @@ jobs:
         shell: pwsh
 
       - name: Upload artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chronos-napi-${{ matrix.suffix }}
-          path: ws/packages/chronos/index.${{ matrix.suffix }}.node
+          path: index.${{ matrix.suffix }}.node
           if-no-files-found: error
 
   cargo-tests:
     name: Cargo tests (linux-x64-gnu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
 
@@ -157,12 +124,12 @@ jobs:
     needs: [build-and-test, cargo-tests]
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: { version: 9 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
@@ -245,8 +212,8 @@ jobs:
             echo "Drift gate passed: local $local_v > registry $npm_v"
           fi
 
-      - run: pnpm install
-      - uses: actions/download-artifact@v4
+      - run: pnpm install --no-frozen-lockfile
+      - uses: actions/download-artifact@v7
         with:
           pattern: chronos-napi-*
           merge-multiple: true

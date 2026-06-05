@@ -1,70 +1,69 @@
 {
-	"name": "@c9up/chronos",
-	"version": "0.1.0",
-	"description": "Chronos — advanced date/time and recurrence engine (TypeScript + Rust N-API)",
-	"license": "MIT",
-	"type": "module",
-	"main": "./src/index.ts",
-	"types": "./src/index.ts",
-	"exports": {
-		".": {
-			"types": "./src/index.ts",
-			"import": "./src/index.ts"
-		},
-		"./atlas": {
-			"types": "./src/atlas.ts",
-			"import": "./src/atlas.ts"
-		}
-	},
-	"files": [
-		"LICENSE",
-		"README.md",
-		"dist",
-		"index.*.node",
-		"index.d.ts",
-		"index.js",
-		"scripts",
-		"src",
-		"wasm"
-	],
-	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
-		"build:rust": "cargo build --release",
-		"build:napi": "cargo build --release && node scripts/copy-napi.mjs",
-		"test": "vitest run",
-		"test:rust": "cargo test",
-		"test:napi": "node scripts/verify-napi.mjs",
-		"build:wasm": "wasm-pack build --target web crates/chronos-engine-wasm --out-dir ../../wasm",
-		"lint": "biome check src/",
-		"test:coverage": "vitest run --coverage",
-		"typecheck": "tsc --noEmit"
-	},
-	"devDependencies": {
-		"@c9up/atlas": "^0.1.0",
-		"@types/node": "^22.19.15",
-		"typescript": "^6.0.2",
-		"vitest": "^4.1.2"
-	},
-	"engines": {
-		"node": ">=22.0.0"
-	},
-	"publishConfig": {
-		"main": "./dist/index.js",
-		"types": "./dist/index.d.ts",
-		"exports": {
-			".": {
-				"types": "./dist/index.d.ts",
-				"import": "./dist/index.js"
-			},
-			"./atlas": {
-				"types": "./dist/atlas.d.ts",
-				"import": "./dist/atlas.js"
-			}
-		},
-		"access": "public"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/C9up/chronos.git"
-	}
+  "name": "@c9up/chronos",
+  "version": "0.1.0",
+  "description": "Chronos — advanced date/time and recurrence engine (TypeScript + Rust N-API)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./atlas": {
+      "types": "./src/atlas.ts",
+      "import": "./src/atlas.ts"
+    }
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist",
+    "index.*.node",
+    "index.d.ts",
+    "index.js",
+    "scripts",
+    "src",
+    "wasm"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "build:rust": "cargo build --release",
+    "build:napi": "cargo build --release && node scripts/copy-napi.mjs",
+    "test": "vitest run",
+    "test:rust": "cargo test",
+    "test:napi": "node scripts/verify-napi.mjs",
+    "build:wasm": "wasm-pack build --target web crates/chronos-engine-wasm --out-dir ../../wasm",
+    "lint": "biome check src/",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./atlas": {
+        "types": "./dist/atlas.d.ts",
+        "import": "./dist/atlas.js"
+      }
+    },
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/C9up/chronos.git"
+  }
 }
