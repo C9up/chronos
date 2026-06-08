@@ -16,3 +16,4 @@ coverage/
 wasm/*.js
 wasm/*.wasm
 wasm/*_bg.*
+*.tgz
