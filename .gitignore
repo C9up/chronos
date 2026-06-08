@@ -1,0 +1,18 @@
+# Build artifacts
+target/
+node_modules/
+dist/
+
+# NAPI prebuilt binary — produced by `pnpm build:napi` or CI.
+*.node
+
+# Compiled TS outputs — source-of-truth is src/*.ts, not the emitted JS/d.ts.
+src/**/*.js
+src/**/*.d.ts
+tests/**/*.js
+tests/**/*.d.ts
+
+coverage/
+wasm/*.js
+wasm/*.wasm
+wasm/*_bg.*
