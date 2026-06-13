@@ -740,4 +740,10 @@ describe("chronos > Duration > audit 2026-06-13 (round-trip + format)", () => {
 		const d = Duration.fromObject({ hours: 2, minutes: 30 });
 		expect(d.toFormat("h [hours], m [min]")).toBe("2 hours, 30 min");
 	});
+
+	it("fromISO rejects bare 'P'/'PT' but accepts an explicit zero", () => {
+		expect(() => Duration.fromISO("P")).toThrow(/Invalid ISO 8601/);
+		expect(() => Duration.fromISO("PT")).toThrow(/Invalid ISO 8601/);
+		expect(Duration.fromISO("PT0S").as("seconds")).toBe(0);
+	});
 });

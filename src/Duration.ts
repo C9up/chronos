@@ -105,6 +105,11 @@ export class Duration {
 		if (!match) throw new Error(`Invalid ISO 8601 duration: ${iso}`);
 
 		const [, y, mo, d, h, mi, sec] = match;
+		// The all-optional regex also matches bare "P"/"PT" — a duration needs at
+		// least one component. An explicit zero ("PT0S", "P0D") still parses.
+		if (!y && !mo && !d && !h && !mi && !sec) {
+			throw new Error(`Invalid ISO 8601 duration: ${iso}`);
+		}
 		const seconds = sec ? Math.floor(Number.parseFloat(sec)) : 0;
 		const milliseconds = sec
 			? Math.round((Number.parseFloat(sec) - seconds) * 1000)
