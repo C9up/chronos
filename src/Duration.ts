@@ -84,14 +84,18 @@ export class Duration {
 	 * that cannot be mixed with other designators per the spec.
 	 */
 	static fromISO(iso: string): Duration {
-		const s = iso.trim();
+		const trimmed = iso.trim();
+		// A leading '-' marks a negative duration (the extension toISO emits).
+		const negative = trimmed.startsWith("-P");
+		const s = negative ? trimmed.slice(1) : trimmed;
 		if (!s.startsWith("P"))
 			throw new Error(`Invalid ISO 8601 duration: ${iso}`);
+		const apply = (d: Duration): Duration => (negative ? d.negate() : d);
 
 		// Week form: P3W
 		const weekMatch = /^P(\d+(?:\.\d+)?)W$/.exec(s);
 		if (weekMatch) {
-			return new Duration({ weeks: Number.parseFloat(weekMatch[1]) });
+			return apply(new Duration({ weeks: Number.parseFloat(weekMatch[1]) }));
 		}
 
 		const match =
@@ -105,15 +109,17 @@ export class Duration {
 		const milliseconds = sec
 			? Math.round((Number.parseFloat(sec) - seconds) * 1000)
 			: 0;
-		return new Duration({
-			years: y ? Number(y) : 0,
-			months: mo ? Number(mo) : 0,
-			days: d ? Number(d) : 0,
-			hours: h ? Number(h) : 0,
-			minutes: mi ? Number(mi) : 0,
-			seconds,
-			milliseconds,
-		});
+		return apply(
+			new Duration({
+				years: y ? Number(y) : 0,
+				months: mo ? Number(mo) : 0,
+				days: d ? Number(d) : 0,
+				hours: h ? Number(h) : 0,
+				minutes: mi ? Number(mi) : 0,
+				seconds,
+				milliseconds,
+			}),
+		);
 	}
 
 	// ─── Accessors ──────────────────────────────────────────
@@ -297,42 +303,102 @@ export class Duration {
 
 	// ─── Formatting ─────────────────────────────────────────
 
-	/** ISO 8601 duration string (`P1Y2M3DT4H5M6S`). */
+	/**
+	 * ISO 8601 duration string (`P1Y2M3DT4H5M6S`). Always round-trips through
+	 * {@link fromISO}.
+	 *
+	 * Two spec constraints are honoured: the week form (`PnW`) cannot mix with
+	 * other designators — so weeks are emitted alone as `PnW`, otherwise folded
+	 * into days; and durations are non-negative — a uniformly-negative duration
+	 * (e.g. from {@link negate}) is emitted with a single leading `-` over
+	 * absolute components, which `fromISO` parses back.
+	 */
 	toISO(): string {
 		const v = this.#values;
+		const units = ORDERED_UNITS.map((u) => v[u]);
+		const negative = units.some((n) => n < 0) && units.every((n) => n <= 0);
+		const sign = negative ? "-" : "";
+		const a = (n: number): number => (negative ? Math.abs(n) : n);
+
+		// Week form only when weeks is the sole unit; never combined with others.
+		const onlyWeeks =
+			v.weeks !== 0 &&
+			v.years === 0 &&
+			v.months === 0 &&
+			v.days === 0 &&
+			v.hours === 0 &&
+			v.minutes === 0 &&
+			v.seconds === 0 &&
+			v.milliseconds === 0;
+		if (onlyWeeks) return `${sign}P${a(v.weeks)}W`;
+
+		const days = v.days + v.weeks * 7;
 		let date = "";
-		if (v.years) date += `${v.years}Y`;
-		if (v.months) date += `${v.months}M`;
-		if (v.weeks) date += `${v.weeks}W`;
-		if (v.days) date += `${v.days}D`;
+		if (v.years) date += `${a(v.years)}Y`;
+		if (v.months) date += `${a(v.months)}M`;
+		if (days) date += `${a(days)}D`;
 		let time = "";
-		if (v.hours) time += `${v.hours}H`;
-		if (v.minutes) time += `${v.minutes}M`;
+		if (v.hours) time += `${a(v.hours)}H`;
+		if (v.minutes) time += `${a(v.minutes)}M`;
 		const totalSec = v.seconds + v.milliseconds / 1000;
-		if (totalSec) time += `${totalSec}S`;
+		if (totalSec) time += `${a(totalSec)}S`;
 		if (!date && !time) return "PT0S";
-		return `P${date}${time ? `T${time}` : ""}`;
+		return `${sign}P${date}${time ? `T${time}` : ""}`;
 	}
 
 	/**
 	 * Simple pattern format: `hh:mm:ss`, `HH:mm`, etc. Supported tokens:
 	 * `Y` (years), `M` (months), `d` (days), `h`/`hh` (hours), `m`/`mm`
 	 * (minutes), `s`/`ss` (seconds), `S`/`SSS` (milliseconds).
+	 *
+	 * Wrap literal text in square brackets so its letters aren't read as tokens:
+	 * `"h [hours], m [min]"` → `"2 hours, 30 min"`. A single left-to-right scan
+	 * (longest token first) means substituted values are never re-scanned and
+	 * literal/overlapping text is left intact.
 	 */
 	toFormat(pattern: string): string {
 		const v = this.normalize().#values;
-		return pattern
-			.replace(/hh/g, String(v.hours).padStart(2, "0"))
-			.replace(/mm/g, String(v.minutes).padStart(2, "0"))
-			.replace(/ss/g, String(v.seconds).padStart(2, "0"))
-			.replace(/SSS/g, String(v.milliseconds).padStart(3, "0"))
-			.replace(/h/g, String(v.hours))
-			.replace(/m/g, String(v.minutes))
-			.replace(/s/g, String(v.seconds))
-			.replace(/S/g, String(v.milliseconds))
-			.replace(/Y/g, String(v.years))
-			.replace(/M/g, String(v.months))
-			.replace(/d/g, String(v.days));
+		const tokens: Record<string, string> = {
+			SSS: String(v.milliseconds).padStart(3, "0"),
+			hh: String(v.hours).padStart(2, "0"),
+			mm: String(v.minutes).padStart(2, "0"),
+			ss: String(v.seconds).padStart(2, "0"),
+			S: String(v.milliseconds),
+			h: String(v.hours),
+			m: String(v.minutes),
+			s: String(v.seconds),
+			Y: String(v.years),
+			M: String(v.months),
+			d: String(v.days),
+		};
+		const order = ["SSS", "hh", "mm", "ss", "S", "h", "m", "s", "Y", "M", "d"];
+		let out = "";
+		let i = 0;
+		while (i < pattern.length) {
+			if (pattern[i] === "[") {
+				i++;
+				while (i < pattern.length && pattern[i] !== "]") {
+					out += pattern[i];
+					i++;
+				}
+				if (i < pattern.length) i++; // skip the closing ']'
+				continue;
+			}
+			let matched = false;
+			for (const key of order) {
+				if (pattern.startsWith(key, i)) {
+					out += tokens[key];
+					i += key.length;
+					matched = true;
+					break;
+				}
+			}
+			if (!matched) {
+				out += pattern[i];
+				i++;
+			}
+		}
+		return out;
 	}
 
 	/**

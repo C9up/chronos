@@ -714,3 +714,30 @@ describe("chronos > Codex fixes", () => {
 		expect(() => new DateTime().setZone("Not/A/Zone")).toThrow(/Unknown/);
 	});
 });
+
+describe("chronos > Duration > audit 2026-06-13 (round-trip + format)", () => {
+	it("toISO folds weeks+days into a parseable string and round-trips", () => {
+		const d = Duration.fromObject({ weeks: 2, days: 3 });
+		// P2W3D is invalid ISO 8601 (W can't combine) — fold weeks into days.
+		expect(d.toISO()).toBe("P17D");
+		expect(Duration.fromISO(d.toISO()).as("days")).toBe(17);
+	});
+
+	it("toISO keeps the week form when weeks is the only unit", () => {
+		expect(Duration.fromObject({ weeks: 2 }).toISO()).toBe("P2W");
+		expect(Duration.fromISO("P2W").weeks).toBe(2);
+	});
+
+	it("negate().toISO() is valid ISO 8601 and round-trips", () => {
+		const d = Duration.fromObject({ hours: 1, minutes: 30 }).negate();
+		expect(d.toISO()).toBe("-PT1H30M");
+		const back = Duration.fromISO(d.toISO());
+		expect(back.hours).toBe(-1);
+		expect(back.minutes).toBe(-30);
+	});
+
+	it("toFormat leaves bracketed literal text intact", () => {
+		const d = Duration.fromObject({ hours: 2, minutes: 30 });
+		expect(d.toFormat("h [hours], m [min]")).toBe("2 hours, 30 min");
+	});
+});
