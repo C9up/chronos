@@ -1,6 +1,6 @@
 {
   "name": "@c9up/chronos",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Chronos — advanced date/time and recurrence engine (TypeScript + Rust N-API)",
   "license": "MIT",
   "type": "module",
