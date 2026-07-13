@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "chronos-engine"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "chronos-engine-napi"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "chronos-engine",
  "napi",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "chronos-engine-wasm"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "chronos-engine",
  "js-sys",

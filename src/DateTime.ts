@@ -453,11 +453,19 @@ export class DateTime {
 					s.setUTCMinutes(s.getUTCMinutes() + 1);
 					break;
 			}
-			s.setUTCMilliseconds(s.getUTCMilliseconds() - 1); // last millisecond, not last second
-			return new DateTime(
-				nativeChronos().fromLocal(normalizeIso(s.toISOString()), this.#zone),
+			// `s` now holds the START of the next unit (whole second). Resolve it to
+			// a UTC instant in-zone, THEN step back one millisecond — doing the -1ms
+			// on the UTC side (exactly like the native UTC end_of) avoids handing
+			// `fromLocal` a fractional-second string, which its parser rejects
+			// (`…T23:59:59.999` → "Invalid naive datetime").
+			const nextStartUtc = nativeChronos().fromLocal(
+				normalizeIso(s.toISOString()),
 				this.#zone,
 			);
+			const endIso = new Date(
+				new Date(nextStartUtc).getTime() - 1,
+			).toISOString();
+			return new DateTime(endIso, this.#zone);
 		}
 		return new DateTime(nativeChronos().endOf(this.#iso, unit), this.#zone);
 	}

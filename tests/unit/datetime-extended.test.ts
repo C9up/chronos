@@ -79,6 +79,20 @@ describe("chronos > DateTime > startOf / endOf in non-UTC zones", () => {
 		const utc = new DateTime("2026-06-15T12:34:56Z");
 		expect(utc.endOf("year").format("YYYY-MM-DD")).toBe("2026-12-31");
 	});
+
+	it("endOf('day') in a non-UTC zone reaches 23:59:59 local (regression)", () => {
+		// Repro of the reported crash: the zoned endOf handed `from_local` a
+		// fractional `…T23:59:59.999` string its parser rejected. Must not throw
+		// and must land on the last second of the zone-local day.
+		const end = dt.endOf("day");
+		expect(end.format("YYYY-MM-DD")).toBe("2026-06-15");
+		expect(end.format("HH:mm:ss")).toBe("23:59:59");
+	});
+
+	it("endOf('month') / endOf('year') in a non-UTC zone", () => {
+		expect(dt.endOf("month").format("YYYY-MM-DD")).toBe("2026-06-30");
+		expect(dt.endOf("year").format("YYYY-MM-DD")).toBe("2026-12-31");
+	});
 });
 
 describe("chronos > DateTime > arithmetic in zones", () => {
