@@ -102,21 +102,14 @@ function isDateTimeLike(value: unknown): value is DateTime {
  *     this adapter; configure your DB / driver to emit Z-suffixed strings or
  *     `Date` instances, or pre-process via `DateTime.fromSQL`.
  *
- * **Stacking caveat with `@column.dateTime({ autoCreate, autoUpdate })`:**
- * the auto-timestamp decorator (story 32.8) writes `new Date()` (a JS `Date`)
- * to the entity property when `autoCreate` / `autoUpdate` is set. If you
- * ALSO tag the same property with `@Column(dateTimeAtlasAdapter)`, `prepare`
- * will receive a `Date` and throw the "expected a DateTime instance"
- * `TypeError` at INSERT / UPDATE time. **Only the `autoCreate` / `autoUpdate`
- * flags conflict** — plain `@column.dateTime()` (no flags) does not write
- * anything and is safe to stack. Mitigations when you need auto-timestamps:
- *   - **Adapter only**: drop `@column.dateTime({ autoCreate, autoUpdate })`
- *     and assign manually (e.g., in a model hook:
- *     `entity.createdAt = DateTime.now()`).
- *   - **`@column.dateTime({ ... })` only**: drop the adapter and manually
- *     wrap reads with `new DateTime(row.createdAt)` at the call site.
- * The adapter does NOT silently coerce `Date` → `DateTime` because that
- * would mask the inconsistency between the two mechanisms.
+ * **Auto-timestamps stack cleanly.** As of the atlas date-engine switch, atlas
+ * hydrates every `@column.date()` / `@column.dateTime()` to a Chronos `DateTime`
+ * by default and `@column.dateTime({ autoCreate, autoUpdate })` stamps
+ * `DateTime.now()` (not a JS `Date`). So tagging the same property with this
+ * adapter is redundant (the default already produces DateTime) and no longer
+ * throws — `prepare` receives a `DateTime`. Reach for this explicit adapter only
+ * when you want DateTime semantics on a column atlas would NOT treat as a date
+ * column (e.g. a plain `@Column()` storing a timestamp).
  *
  * The shape `{ prepare, consume }` is **passable directly** to `@Column(...)`:
  * `@Column(dateTimeAtlasAdapter)` is identical to
