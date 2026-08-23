@@ -15,6 +15,16 @@ export function add(iso: string, amount: bigint, unit: string): string;
 export function diff(a: string, b: string, unit: string): bigint;
 export function start_of(iso: string, unit: string): string;
 export function end_of(iso: string, unit: string): string;
+export function start_of_in_zone(
+	utcIso: string,
+	unit: string,
+	zone: string,
+): string;
+export function end_of_in_zone(
+	utcIso: string,
+	unit: string,
+	zone: string,
+): string;
 export function format(iso: string, pattern: string): string;
 export function validate_timezone(zone: string): string;
 export function to_zone(

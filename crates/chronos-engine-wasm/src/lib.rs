@@ -46,6 +46,16 @@ pub fn add_in_zone(utc_iso: &str, amount: i64, unit: &str, zone: &str) -> Result
 }
 
 #[wasm_bindgen]
+pub fn start_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String, JsValue> {
+    chronos_engine::start_of_in_zone(utc_iso, unit, zone).map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
+pub fn end_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String, JsValue> {
+    chronos_engine::end_of_in_zone(utc_iso, unit, zone).map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
 pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<i64, JsValue> {
     chronos_engine::diff_in_zone(a_utc, b_utc, unit, zone).map_err(|e| JsValue::from_str(&e))
 }

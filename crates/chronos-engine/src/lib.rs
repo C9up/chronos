@@ -35,54 +35,78 @@ pub fn diff(a_iso: &str, b_iso: &str, unit: &str) -> Result<i64, String> {
   Ok(out)
 }
 
-pub fn start_of(iso: &str, unit: &str) -> Result<String, String> {
-  let dt = parse_iso(iso)?;
-  let nd = dt.naive_utc();
+/// Truncate a naive datetime to the start of `unit`.
+///
+/// The ONE place boundary arithmetic lives. `start_of` applies it to a UTC
+/// instant and `start_of_in_zone` to a wall-clock one — before this existed the
+/// zoned path was a hand-written switch in TypeScript, and the two drifted:
+/// `second` was added to one and not the other, so the same call answered
+/// differently depending on the zone.
+fn start_of_naive(nd: NaiveDateTime, unit: &str) -> Result<NaiveDateTime, String> {
+  let date = nd.date();
   let out = match unit.to_ascii_lowercase().as_str() {
-    "year" => Utc
-      .with_ymd_and_hms(nd.year(), 1, 1, 0, 0, 0)
-      .single()
-      .ok_or_else(|| "Invalid year start".to_string())?,
-    "month" => Utc
-      .with_ymd_and_hms(nd.year(), nd.month(), 1, 0, 0, 0)
-      .single()
-      .ok_or_else(|| "Invalid month start".to_string())?,
-    "week" => {
-      let offset = nd.weekday().num_days_from_monday() as i64;
-      let d = nd.date() - Duration::days(offset);
-      Utc.with_ymd_and_hms(d.year(), d.month(), d.day(), 0, 0, 0)
-        .single()
-        .ok_or_else(|| "Invalid week start".to_string())?
+    "year" => NaiveDate::from_ymd_opt(date.year(), 1, 1).and_then(|d| d.and_hms_opt(0, 0, 0)),
+    "month" => {
+      NaiveDate::from_ymd_opt(date.year(), date.month(), 1).and_then(|d| d.and_hms_opt(0, 0, 0))
     }
-    "day" => Utc
-      .with_ymd_and_hms(nd.year(), nd.month(), nd.day(), 0, 0, 0)
-      .single()
-      .ok_or_else(|| "Invalid day start".to_string())?,
-    "hour" => Utc
-      .with_ymd_and_hms(nd.year(), nd.month(), nd.day(), nd.hour(), 0, 0)
-      .single()
-      .ok_or_else(|| "Invalid hour start".to_string())?,
-    "minute" => Utc
-      .with_ymd_and_hms(nd.year(), nd.month(), nd.day(), nd.hour(), nd.minute(), 0)
-      .single()
-      .ok_or_else(|| "Invalid minute start".to_string())?,
+    "week" => {
+      let offset = date.weekday().num_days_from_monday() as i64;
+      (date - Duration::days(offset)).and_hms_opt(0, 0, 0)
+    }
+    "day" => date.and_hms_opt(0, 0, 0),
+    "hour" => date.and_hms_opt(nd.hour(), 0, 0),
+    "minute" => date.and_hms_opt(nd.hour(), nd.minute(), 0),
+    "second" => date.and_hms_opt(nd.hour(), nd.minute(), nd.second()),
     _ => return Err(format!("Unsupported unit: {}", unit)),
   };
-  Ok(to_iso(out))
+  out.ok_or_else(|| format!("Invalid {} start", unit))
 }
 
-pub fn end_of(iso: &str, unit: &str) -> Result<String, String> {
-  let start = parse_iso(&start_of(iso, unit)?)?;
-  let next = match unit.to_ascii_lowercase().as_str() {
-    "year" => add_months(start, 12),
-    "month" => add_months(start, 1),
+/// The start of the unit AFTER the one containing `nd` — the other half of
+/// `end_of`, kept beside `start_of_naive` so the two unit lists cannot drift.
+fn next_unit_naive(nd: NaiveDateTime, unit: &str) -> Result<NaiveDateTime, String> {
+  let start = start_of_naive(nd, unit)?;
+  Ok(match unit.to_ascii_lowercase().as_str() {
+    "year" => add_months_naive(start, 12),
+    "month" => add_months_naive(start, 1),
     "week" => start + Duration::weeks(1),
     "day" => start + Duration::days(1),
     "hour" => start + Duration::hours(1),
     "minute" => start + Duration::minutes(1),
+    "second" => start + Duration::seconds(1),
     _ => return Err(format!("Unsupported unit: {}", unit)),
-  };
-  Ok(to_iso(next - Duration::milliseconds(1)))
+  })
+}
+
+pub fn start_of(iso: &str, unit: &str) -> Result<String, String> {
+  let dt = parse_iso(iso)?;
+  let naive = start_of_naive(dt.naive_utc(), unit)?;
+  Ok(to_iso(Utc.from_utc_datetime(&naive)))
+}
+
+/// `start_of` against the WALL CLOCK in `zone`, returned as a UTC instant.
+pub fn start_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String, String> {
+  let dt = parse_iso(utc_iso)?;
+  let tz: Tz = zone.parse().map_err(|_| format!("Unknown timezone: {}", zone))?;
+  let naive = start_of_naive(dt.with_timezone(&tz).naive_local(), unit)?;
+  resolve_local(naive, tz)
+}
+
+/// `end_of` against the WALL CLOCK in `zone`, returned as a UTC instant.
+pub fn end_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String, String> {
+  let dt = parse_iso(utc_iso)?;
+  let tz: Tz = zone.parse().map_err(|_| format!("Unknown timezone: {}", zone))?;
+  let next = next_unit_naive(dt.with_timezone(&tz).naive_local(), unit)?;
+  // Step back on the UTC side: `resolve_local` parses whole seconds only, so a
+  // `…:59.999` wall-clock string would be rejected.
+  let next_utc = parse_iso(&resolve_local(next, tz)?)?;
+  Ok(to_iso(next_utc - Duration::milliseconds(1)))
+}
+
+pub fn end_of(iso: &str, unit: &str) -> Result<String, String> {
+  let dt = parse_iso(iso)?;
+  let next = next_unit_naive(dt.naive_utc(), unit)?;
+  Ok(to_iso(Utc.from_utc_datetime(&next) - Duration::milliseconds(1)))
 }
 
 pub fn format(iso: &str, pattern: &str) -> Result<String, String> {
@@ -280,8 +304,11 @@ fn add_months_naive(dt: NaiveDateTime, months: i64) -> NaiveDateTime {
   let month = (month0 + 1) as u32;
   let max_day = days_in_month(year as i32, month);
   let day = dt.day().min(max_day);
+  // Nanoseconds carried through: month arithmetic moves the DATE, it does not
+  // truncate the instant. Dropping them silently rounded every timestamp to the
+  // whole second.
   NaiveDate::from_ymd_opt(year as i32, month, day)
-    .and_then(|d| d.and_hms_opt(dt.hour(), dt.minute(), dt.second()))
+    .and_then(|d| d.and_hms_nano_opt(dt.hour(), dt.minute(), dt.second(), dt.nanosecond()))
     .unwrap_or(dt)
 }
 
@@ -1131,16 +1158,11 @@ fn add_months(dt: DateTime<Utc>, months: i64) -> DateTime<Utc> {
   let month = (month0 + 1) as u32;
   let max_day = days_in_month(year as i32, month);
   let day = dt.day().min(max_day);
-  Utc.with_ymd_and_hms(
-    year as i32,
-    month,
-    day,
-    dt.hour(),
-    dt.minute(),
-    dt.second(),
-  )
-  .single()
-  .unwrap_or(dt)
+  // Nanoseconds carried through — see add_months_naive.
+  NaiveDate::from_ymd_opt(year as i32, month, day)
+    .and_then(|d| d.and_hms_nano_opt(dt.hour(), dt.minute(), dt.second(), dt.nanosecond()))
+    .map(|naive| Utc.from_utc_datetime(&naive))
+    .unwrap_or(dt)
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {

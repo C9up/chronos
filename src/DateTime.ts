@@ -21,7 +21,14 @@ export type DateUnit =
 	| "week"
 	| "month"
 	| "year";
-export type BoundUnit = "minute" | "hour" | "day" | "week" | "month" | "year";
+export type BoundUnit =
+	| "second"
+	| "minute"
+	| "hour"
+	| "day"
+	| "week"
+	| "month"
+	| "year";
 export type DateInput = string | Date | DateTime;
 export interface DateRange {
 	start: DateInput;
@@ -377,97 +384,33 @@ export class DateTime {
 
 	// ─── Boundaries ─────────────────────────────────────────
 
+	/**
+	 * Truncate to the start of `unit`.
+	 *
+	 * Both the UTC and the zoned path go through the SAME Rust routine. The
+	 * zoned one used to be a hand-written switch here, and the two drifted:
+	 * `second` was added to one and not the other, so the same call answered
+	 * differently depending on the zone.
+	 */
 	startOf(unit: BoundUnit): DateTime {
-		if (this.#zone !== "UTC") {
-			const zoned = nativeChronos().toZone(this.#iso, this.#zone).iso;
-			// Strip offset, compute boundary in fake-UTC, resolve back via fromLocal.
-			const naive = zoned.replace(/[+-]\d{2}:\d{2}$/, "Z");
-			const d = new Date(naive);
-			switch (unit) {
-				case "year":
-					d.setUTCMonth(0, 1);
-					d.setUTCHours(0, 0, 0, 0);
-					break;
-				case "month":
-					d.setUTCDate(1);
-					d.setUTCHours(0, 0, 0, 0);
-					break;
-				case "week": {
-					const wd = d.getUTCDay();
-					d.setUTCDate(d.getUTCDate() - (wd === 0 ? 6 : wd - 1));
-					d.setUTCHours(0, 0, 0, 0);
-					break;
-				}
-				case "day":
-					d.setUTCHours(0, 0, 0, 0);
-					break;
-				case "hour":
-					d.setUTCMinutes(0, 0, 0);
-					break;
-				case "minute":
-					d.setUTCSeconds(0, 0);
-					break;
-			}
-			return new DateTime(
-				nativeChronos().fromLocal(normalizeIso(d.toISOString()), this.#zone),
-				this.#zone,
-			);
-		}
-		return new DateTime(nativeChronos().startOf(this.#iso, unit), this.#zone);
+		const n = nativeChronos();
+		return new DateTime(
+			this.#zone === "UTC"
+				? n.startOf(this.#iso, unit)
+				: n.startOfInZone(this.#iso, unit, this.#zone),
+			this.#zone,
+		);
 	}
 
+	/** The last instant of `unit` — see {@link startOf} on the shared routine. */
 	endOf(unit: BoundUnit): DateTime {
-		if (this.#zone !== "UTC") {
-			const zoned = nativeChronos().toZone(this.#iso, this.#zone).iso;
-			const naive = zoned.replace(/[+-]\d{2}:\d{2}$/, "Z");
-			const s = new Date(naive);
-			// Compute startOf first, then advance one unit - 1 second.
-			switch (unit) {
-				case "year":
-					s.setUTCMonth(0, 1);
-					s.setUTCHours(0, 0, 0, 0);
-					s.setUTCFullYear(s.getUTCFullYear() + 1);
-					break;
-				case "month":
-					s.setUTCDate(1);
-					s.setUTCHours(0, 0, 0, 0);
-					s.setUTCMonth(s.getUTCMonth() + 1);
-					break;
-				case "week": {
-					const wd = s.getUTCDay();
-					s.setUTCDate(s.getUTCDate() - (wd === 0 ? 6 : wd - 1));
-					s.setUTCHours(0, 0, 0, 0);
-					s.setUTCDate(s.getUTCDate() + 7);
-					break;
-				}
-				case "day":
-					s.setUTCHours(0, 0, 0, 0);
-					s.setUTCDate(s.getUTCDate() + 1);
-					break;
-				case "hour":
-					s.setUTCMinutes(0, 0, 0);
-					s.setUTCHours(s.getUTCHours() + 1);
-					break;
-				case "minute":
-					s.setUTCSeconds(0, 0);
-					s.setUTCMinutes(s.getUTCMinutes() + 1);
-					break;
-			}
-			// `s` now holds the START of the next unit (whole second). Resolve it to
-			// a UTC instant in-zone, THEN step back one millisecond — doing the -1ms
-			// on the UTC side (exactly like the native UTC end_of) avoids handing
-			// `fromLocal` a fractional-second string, which its parser rejects
-			// (`…T23:59:59.999` → "Invalid naive datetime").
-			const nextStartUtc = nativeChronos().fromLocal(
-				normalizeIso(s.toISOString()),
-				this.#zone,
-			);
-			const endIso = new Date(
-				new Date(nextStartUtc).getTime() - 1,
-			).toISOString();
-			return new DateTime(endIso, this.#zone);
-		}
-		return new DateTime(nativeChronos().endOf(this.#iso, unit), this.#zone);
+		const n = nativeChronos();
+		return new DateTime(
+			this.#zone === "UTC"
+				? n.endOf(this.#iso, unit)
+				: n.endOfInZone(this.#iso, unit, this.#zone),
+			this.#zone,
+		);
 	}
 
 	// ─── Range ──────────────────────────────────────────────

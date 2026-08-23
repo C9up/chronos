@@ -18,6 +18,8 @@ export interface NativeChronos {
 		zone: string,
 	): { iso: string; offsetMinutes: number; zoneName: string };
 	addInZone(utcIso: string, amount: number, unit: string, zone: string): string;
+	startOfInZone(utcIso: string, unit: string, zone: string): string;
+	endOfInZone(utcIso: string, unit: string, zone: string): string;
 	diffInZone(aUtc: string, bUtc: string, unit: string, zone: string): number;
 	zoneOffset(utcIso: string, zone: string): number;
 	fromLocal(naiveIso: string, zone: string): string;
@@ -94,6 +96,9 @@ if (isNode) {
 			toZone: (iso, zone) => wasm.to_zone(iso, zone),
 			addInZone: (iso, amount, unit, zone) =>
 				wasm.add_in_zone(iso, BigInt(amount), unit, zone),
+			startOfInZone: (iso, unit, zone) =>
+				wasm.start_of_in_zone(iso, unit, zone),
+			endOfInZone: (iso, unit, zone) => wasm.end_of_in_zone(iso, unit, zone),
 			diffInZone: (a, b, unit, zone) =>
 				Number(wasm.diff_in_zone(a, b, unit, zone)),
 			zoneOffset: (iso, zone) => wasm.zone_offset(iso, zone),

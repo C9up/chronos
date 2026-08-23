@@ -96,6 +96,16 @@ pub fn add_in_zone(utc_iso: String, amount: i64, unit: String, zone: String) -> 
 }
 
 #[napi]
+pub fn start_of_in_zone(utc_iso: String, unit: String, zone: String) -> Result<String> {
+  wrap_string(|| chronos_engine::start_of_in_zone(&utc_iso, &unit, &zone))
+}
+
+#[napi]
+pub fn end_of_in_zone(utc_iso: String, unit: String, zone: String) -> Result<String> {
+  wrap_string(|| chronos_engine::end_of_in_zone(&utc_iso, &unit, &zone))
+}
+
+#[napi]
 pub fn diff_in_zone(a_utc: String, b_utc: String, unit: String, zone: String) -> Result<i64> {
   let result = catch_unwind(|| chronos_engine::diff_in_zone(&a_utc, &b_utc, &unit, &zone));
   match result {
