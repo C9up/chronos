@@ -9,24 +9,24 @@ describe("Chronos", () => {
 
 	it("supports date arithmetic", () => {
 		const dt = at("2026-01-15T10:00:00Z");
-		expect(dt.plus(1, "month").toISO()).toBe("2026-02-15T10:00:00Z");
-		expect(dt.minus(2, "day").toISO()).toBe("2026-01-13T10:00:00Z");
-		expect(Chronos.add("2026-01-15T10:00:00Z", 7, "day").toISO()).toBe(
-			"2026-01-22T10:00:00Z",
+		expect(dt.plus(1, "month").toISO()).toBe("2026-02-15T10:00:00.000Z");
+		expect(dt.minus(2, "day").toISO()).toBe("2026-01-13T10:00:00.000Z");
+		expect(Chronos.add("2026-01-15T10:00:00.000Z", 7, "day").toISO()).toBe(
+			"2026-01-22T10:00:00.000Z",
 		);
 	});
 
 	it("supports diff and boundaries", () => {
 		const a = new DateTime("2026-01-15T10:00:00Z");
-		expect(a.diff("2026-01-17T10:00:00Z", "day")).toBe(2);
+		expect(a.diff("2026-01-17T10:00:00.000Z", "day")).toBe(2);
 
-		const b = new DateTime("2026-01-15T10:34:55Z");
-		expect(b.startOf("day").toISO()).toBe("2026-01-15T00:00:00Z");
+		const b = new DateTime("2026-01-15T10:34:55.000Z");
+		expect(b.startOf("day").toISO()).toBe("2026-01-15T00:00:00.000Z");
 		expect(b.endOf("day").toISO()).toBe("2026-01-15T23:59:59.999Z");
 	});
 
 	it("supports formatting", () => {
-		const dt = new DateTime("2026-01-15T10:34:55Z");
+		const dt = new DateTime("2026-01-15T10:34:55.000Z");
 		expect(dt.format("YYYY-MM-DD HH:mm:ss")).toBe("2026-01-15 10:34:55");
 	});
 
@@ -37,9 +37,9 @@ describe("Chronos", () => {
 			10,
 		);
 		expect(out).toEqual([
-			"2026-01-15T15:00:00Z",
-			"2026-02-15T15:00:00Z",
-			"2026-03-15T15:00:00Z",
+			"2026-01-15T15:00:00.000Z",
+			"2026-02-15T15:00:00.000Z",
+			"2026-03-15T15:00:00.000Z",
 		]);
 	});
 
@@ -57,9 +57,9 @@ describe("Chronos", () => {
 			10,
 		);
 		expect(out).toEqual([
-			"2026-01-06T15:00:00Z",
-			"2026-01-13T15:00:00Z",
-			"2026-01-20T15:00:00Z",
+			"2026-01-06T15:00:00.000Z",
+			"2026-01-13T15:00:00.000Z",
+			"2026-01-20T15:00:00.000Z",
 		]);
 	});
 
@@ -74,9 +74,9 @@ describe("Chronos", () => {
 			10,
 		);
 		expect(out).toEqual([
-			"2026-01-25T12:00:00Z",
-			"2026-02-22T12:00:00Z",
-			"2026-03-29T12:00:00Z",
+			"2026-01-25T12:00:00.000Z",
+			"2026-02-22T12:00:00.000Z",
+			"2026-03-29T12:00:00.000Z",
 		]);
 	});
 
@@ -93,9 +93,9 @@ describe("Chronos", () => {
 			10,
 		);
 		expect(out).toEqual([
-			"2026-01-01T10:30:00Z",
-			"2026-01-01T11:30:00Z",
-			"2026-01-01T12:30:00Z",
+			"2026-01-01T10:30:00.000Z",
+			"2026-01-01T11:30:00.000Z",
+			"2026-01-01T12:30:00.000Z",
 		]);
 	});
 
@@ -110,10 +110,13 @@ describe("Chronos", () => {
 			},
 			10,
 		);
-		expect(weekly).toEqual(["2027-01-04T09:00:00Z", "2028-01-03T09:00:00Z"]);
+		expect(weekly).toEqual([
+			"2027-01-04T09:00:00.000Z",
+			"2028-01-03T09:00:00.000Z",
+		]);
 
 		const yearDay = Chronos.rrule(
-			"2026-01-01T00:00:00Z",
+			"2026-01-01T00:00:00.000Z",
 			{
 				freq: "YEARLY",
 				byYearDay: [-1],
@@ -121,7 +124,10 @@ describe("Chronos", () => {
 			},
 			10,
 		);
-		expect(yearDay).toEqual(["2026-12-31T00:00:00Z", "2027-12-31T00:00:00Z"]);
+		expect(yearDay).toEqual([
+			"2026-12-31T00:00:00.000Z",
+			"2027-12-31T00:00:00.000Z",
+		]);
 	});
 
 	it("supports date range comparisons", () => {
@@ -147,13 +153,13 @@ describe("Chronos", () => {
 			}),
 		).toBe(false);
 
-		const dt = Chronos.parse("2026-01-15T12:00:00Z");
+		const dt = Chronos.parse("2026-01-15T12:00:00.000Z");
 		expect(dt.isWithin(outer)).toBe(true);
-		expect(Chronos.inRange("2026-02-01T00:00:00Z", outer)).toBe(false);
+		expect(Chronos.inRange("2026-02-01T00:00:00.000Z", outer)).toBe(false);
 
 		const relation = Chronos.rangeRelation(
-			{ start: "2026-01-05T00:00:00Z", end: "2026-01-12T00:00:00Z" },
-			{ start: "2026-01-10T00:00:00Z", end: "2026-01-20T00:00:00Z" },
+			{ start: "2026-01-05T00:00:00.000Z", end: "2026-01-12T00:00:00.000Z" },
+			{ start: "2026-01-10T00:00:00.000Z", end: "2026-01-20T00:00:00.000Z" },
 		);
 		expect(relation.overlaps).toBe(true);
 		expect(relation.aStartInB).toBe(false);
@@ -168,22 +174,22 @@ describe("Chronos", () => {
 describe("chronos > diff month/year parity (36.1)", () => {
 	it("diff month: Jan 15 → Mar 15 = 2 months", () => {
 		const dt = new DateTime("2026-01-15T10:00:00Z");
-		expect(dt.diff("2026-03-15T10:00:00Z", "month")).toBe(2);
+		expect(dt.diff("2026-03-15T10:00:00.000Z", "month")).toBe(2);
 	});
 
 	it("diff month: Jan 31 → Feb 28 = 0 months (not yet one full month)", () => {
-		const dt = new DateTime("2026-01-31T00:00:00Z");
-		expect(dt.diff("2026-02-28T00:00:00Z", "month")).toBe(0);
+		const dt = new DateTime("2026-01-31T00:00:00.000Z");
+		expect(dt.diff("2026-02-28T00:00:00.000Z", "month")).toBe(0);
 	});
 
 	it("diff year: Jan 15 2024 → Jan 15 2026 = 2 years", () => {
-		const dt = new DateTime("2024-01-15T00:00:00Z");
-		expect(dt.diff("2026-01-15T00:00:00Z", "year")).toBe(2);
+		const dt = new DateTime("2024-01-15T00:00:00.000Z");
+		expect(dt.diff("2026-01-15T00:00:00.000Z", "year")).toBe(2);
 	});
 
 	it("diff month negative: Mar 15 → Jan 15 = -2", () => {
-		const dt = new DateTime("2026-03-15T00:00:00Z");
-		expect(dt.diff("2026-01-15T00:00:00Z", "month")).toBe(-2);
+		const dt = new DateTime("2026-03-15T00:00:00.000Z");
+		expect(dt.diff("2026-01-15T00:00:00.000Z", "month")).toBe(-2);
 	});
 });
 
@@ -212,7 +218,7 @@ describe("chronos > comparison methods (36.5)", () => {
 	});
 
 	it("isBefore / isAfter", () => {
-		const a = new DateTime("2026-04-08T14:00:00Z");
+		const a = new DateTime("2026-04-08T14:00:00.000Z");
 		const b = new DateTime("2026-04-08T15:00:00Z");
 		expect(a.isBefore(b)).toBe(true);
 		expect(b.isAfter(a)).toBe(true);
@@ -220,16 +226,16 @@ describe("chronos > comparison methods (36.5)", () => {
 	});
 
 	it("hasSame at day granularity", () => {
-		const a = new DateTime("2026-04-08T14:00:00Z");
+		const a = new DateTime("2026-04-08T14:00:00.000Z");
 		const b = new DateTime("2026-04-08T23:59:59Z");
 		expect(a.hasSame(b, "day")).toBe(true);
-		expect(a.hasSame("2026-04-09T00:00:00Z", "day")).toBe(false);
+		expect(a.hasSame("2026-04-09T00:00:00.000Z", "day")).toBe(false);
 	});
 
 	it("isSameDay sugar", () => {
-		const a = new DateTime("2026-04-08T14:00:00Z");
-		expect(a.isSameDay("2026-04-08T23:00:00Z")).toBe(true);
-		expect(a.isSameDay("2026-04-09T01:00:00Z")).toBe(false);
+		const a = new DateTime("2026-04-08T14:00:00.000Z");
+		expect(a.isSameDay("2026-04-08T23:00:00.000Z")).toBe(true);
+		expect(a.isSameDay("2026-04-09T01:00:00.000Z")).toBe(false);
 	});
 });
 
@@ -252,7 +258,7 @@ describe("chronos > static factories (36.6)", () => {
 
 	it("fromObject", () => {
 		const dt = DateTime.fromObject({ year: 2026, month: 4, day: 8, hour: 14 });
-		expect(dt.toISO()).toBe("2026-04-08T14:00:00Z");
+		expect(dt.toISO()).toBe("2026-04-08T14:00:00.000Z");
 	});
 });
 
@@ -267,20 +273,20 @@ describe("chronos > calendar accessors (36.10)", () => {
 	});
 
 	it("leap year detection", () => {
-		const dt = new DateTime("2024-02-29T00:00:00Z");
+		const dt = new DateTime("2024-02-29T00:00:00.000Z");
 		expect(dt.isInLeapYear).toBe(true);
 		expect(dt.daysInMonth).toBe(29);
 		expect(dt.daysInYear).toBe(366);
 	});
 
 	it("ISO week year boundary: 2024-12-30 = ISO week 1 of 2025", () => {
-		const dt = new DateTime("2024-12-30T00:00:00Z");
+		const dt = new DateTime("2024-12-30T00:00:00.000Z");
 		expect(dt.weekNumber).toBe(1);
 		expect(dt.weekYear).toBe(2025);
 	});
 
 	it("individual accessors: year/month/day/hour/minute/second/ms", () => {
-		const dt = new DateTime("2026-04-08T14:30:45Z");
+		const dt = new DateTime("2026-04-08T14:30:45.000Z");
 		expect(dt.year).toBe(2026);
 		expect(dt.month).toBe(4);
 		expect(dt.day).toBe(8);
@@ -384,10 +390,10 @@ describe("chronos > Duration (36.8)", () => {
 // === Story 36.9 — Interval ===
 
 describe("chronos > Interval (36.9)", () => {
-	const JAN1 = "2026-01-01T00:00:00Z";
-	const JAN15 = "2026-01-15T00:00:00Z";
-	const FEB1 = "2026-02-01T00:00:00Z";
-	const MAR1 = "2026-03-01T00:00:00Z";
+	const JAN1 = "2026-01-01T00:00:00.000Z";
+	const JAN15 = "2026-01-15T00:00:00.000Z";
+	const FEB1 = "2026-02-01T00:00:00.000Z";
+	const MAR1 = "2026-03-01T00:00:00.000Z";
 
 	it("fromDateTimes + length", () => {
 		const iv = Interval.fromDateTimes(JAN1, FEB1);
@@ -473,17 +479,17 @@ describe("chronos > Interval (36.9)", () => {
 describe("chronos > parse formats (36.7)", () => {
 	it("fromRFC2822", () => {
 		const dt = DateTime.fromRFC2822("Wed, 08 Apr 2026 14:00:00 +0000");
-		expect(dt.toISO()).toBe("2026-04-08T14:00:00Z");
+		expect(dt.toISO()).toBe("2026-04-08T14:00:00.000Z");
 	});
 
 	it("fromSQL", () => {
 		const dt = DateTime.fromSQL("2026-04-08 14:00:00");
-		expect(dt.toISO()).toBe("2026-04-08T14:00:00Z");
+		expect(dt.toISO()).toBe("2026-04-08T14:00:00.000Z");
 	});
 
 	it("fromHTTP", () => {
 		const dt = DateTime.fromHTTP("Wed, 08 Apr 2026 14:00:00 GMT");
-		expect(dt.toISO()).toBe("2026-04-08T14:00:00Z");
+		expect(dt.toISO()).toBe("2026-04-08T14:00:00.000Z");
 	});
 
 	it("fromRFC2822 rejects garbage", () => {
@@ -502,20 +508,26 @@ describe("chronos > timezone support (36.11)", () => {
 		const utc = new DateTime("2026-07-15T14:00:00Z");
 		const paris = utc.setZone("Europe/Paris");
 		expect(paris.zoneName).toBe("Europe/Paris");
-		expect(paris.toISO()).toBe("2026-07-15T14:00:00Z"); // same instant
+		expect(paris.toISO()).toBe("2026-07-15T14:00:00.000Z"); // same instant
 		expect(paris.toZonedISO()).toContain("16:00:00"); // wall-clock +2h
 	});
 
 	it("toUTC resets zone", () => {
-		const paris = new DateTime("2026-07-15T14:00:00Z").setZone("Europe/Paris");
+		const paris = new DateTime("2026-07-15T14:00:00.000Z").setZone(
+			"Europe/Paris",
+		);
 		expect(paris.toUTC().zoneName).toBe("UTC");
 	});
 
 	it("offset returns minutes for the zone at this instant", () => {
-		const summer = new DateTime("2026-07-15T14:00:00Z").setZone("Europe/Paris");
+		const summer = new DateTime("2026-07-15T14:00:00.000Z").setZone(
+			"Europe/Paris",
+		);
 		expect(summer.offset).toBe(120); // CEST
 
-		const winter = new DateTime("2026-01-15T14:00:00Z").setZone("Europe/Paris");
+		const winter = new DateTime("2026-01-15T14:00:00.000Z").setZone(
+			"Europe/Paris",
+		);
 		expect(winter.offset).toBe(60); // CET
 	});
 
@@ -565,7 +577,7 @@ describe("chronos > locale formatting (36.12)", () => {
 	});
 
 	it("toLocaleString respects timezone", () => {
-		const dt = new DateTime("2026-07-15T14:00:00Z").setZone("Europe/Paris");
+		const dt = new DateTime("2026-07-15T14:00:00.000Z").setZone("Europe/Paris");
 		const str = dt.toLocaleString("en-US", {
 			hour: "numeric",
 			hour12: false,
@@ -575,7 +587,7 @@ describe("chronos > locale formatting (36.12)", () => {
 	});
 
 	it("toRelative returns human-readable relative time", () => {
-		const now = new DateTime("2026-04-08T14:00:00Z");
+		const now = new DateTime("2026-04-08T14:00:00.000Z");
 		const future = new DateTime("2026-04-08T17:00:00Z");
 		const rel = future.toRelative({ base: now, locale: "en" });
 		expect(rel).toContain("3"); // "in 3 hours" or similar
@@ -583,7 +595,7 @@ describe("chronos > locale formatting (36.12)", () => {
 	});
 
 	it("toRelative past", () => {
-		const now = new DateTime("2026-04-08T14:00:00Z");
+		const now = new DateTime("2026-04-08T14:00:00.000Z");
 		const past = new DateTime("2026-04-06T14:00:00Z");
 		const rel = past.toRelative({ base: now, locale: "en" });
 		expect(rel).toContain("2"); // "2 days ago"
@@ -601,23 +613,23 @@ describe("chronos > edge cases (36.15)", () => {
 	it("leap day Feb 29 + 1 year = Feb 28 (non-leap)", () => {
 		const dt = new DateTime("2024-02-29T12:00:00Z");
 		const next = dt.plus(1, "year");
-		expect(next.toISO()).toBe("2025-02-28T12:00:00Z");
+		expect(next.toISO()).toBe("2025-02-28T12:00:00.000Z");
 	});
 
 	it("leap day Feb 29 + 4 years = Feb 29 (leap)", () => {
-		const dt = new DateTime("2024-02-29T12:00:00Z");
+		const dt = new DateTime("2024-02-29T12:00:00.000Z");
 		const next = dt.plus(4, "year");
-		expect(next.toISO()).toBe("2028-02-29T12:00:00Z");
+		expect(next.toISO()).toBe("2028-02-29T12:00:00.000Z");
 	});
 
 	it("Jan 31 + 1 month = Feb 28 (day clamping)", () => {
-		const dt = new DateTime("2026-01-31T00:00:00Z");
+		const dt = new DateTime("2026-01-31T00:00:00.000Z");
 		const next = dt.plus(1, "month");
-		expect(next.toISO()).toBe("2026-02-28T00:00:00Z");
+		expect(next.toISO()).toBe("2026-02-28T00:00:00.000Z");
 	});
 
 	it("format with custom pattern and literals", () => {
-		const dt = new DateTime("2026-04-08T14:30:00Z");
+		const dt = new DateTime("2026-04-08T14:30:00.000Z");
 		expect(dt.format("[Today is] YYYY-MM-DD")).toBe("Today is 2026-04-08");
 		expect(dt.format("HH[h]mm")).toBe("14h30");
 	});
@@ -654,7 +666,7 @@ describe("chronos > edge cases (36.15)", () => {
 	});
 
 	it("toMillis / toSeconds round-trip", () => {
-		const dt = new DateTime("2026-04-08T14:00:00Z");
+		const dt = new DateTime("2026-04-08T14:00:00.000Z");
 		expect(DateTime.fromMillis(dt.toMillis()).toISO()).toBe(dt.toISO());
 		expect(DateTime.fromSeconds(dt.toSeconds()).toISO()).toBe(dt.toISO());
 	});

@@ -134,7 +134,7 @@ describe("chronos > DateTime > comparison + sameness", () => {
 
 	it("isSameDay convenience wrapper matches hasSame('day')", () => {
 		expect(a.isSameDay(b)).toBe(true);
-		expect(a.isSameDay("2026-04-09T00:00:00Z")).toBe(false);
+		expect(a.isSameDay("2026-04-09T00:00:00.000Z")).toBe(false);
 	});
 });
 
@@ -166,8 +166,8 @@ describe("chronos > DateTime > formatting helpers", () => {
 	const dt = new DateTime("2026-06-15T12:34:56Z");
 
 	it("toJSON / toString return the ISO string verbatim", () => {
-		expect(dt.toJSON()).toBe("2026-06-15T12:34:56Z");
-		expect(JSON.stringify({ d: dt })).toContain("2026-06-15T12:34:56Z");
+		expect(dt.toJSON()).toBe("2026-06-15T12:34:56.000Z");
+		expect(JSON.stringify({ d: dt })).toContain("2026-06-15T12:34:56.000Z");
 	});
 
 	it("toMillis / toSeconds round-trip with fromMillis", () => {

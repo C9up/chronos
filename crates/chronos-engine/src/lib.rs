@@ -1197,19 +1197,17 @@ fn parse_iso(input: &str) -> Result<DateTime<Utc>, String> {
 }
 
 fn to_iso(dt: DateTime<Utc>) -> String {
-  // Use `Millis` precision so a JS-side `Date` round-trip (which always
-  // preserves milliseconds via `toISOString()`) doesn't silently lose
-  // sub-second data when going through the Rust engine. Previously the
-  // `Secs` mode dropped milliseconds entirely, producing different output
-  // between the native and TS fallback paths for the same input.
-  if dt.timestamp_subsec_millis() == 0 {
-    // Keep the compact form `2026-04-08T14:00:00Z` when there are no
-    // subseconds — it round-trips identically to JavaScript's
-    // `new Date('...').toISOString()` after `.replace('.000Z', 'Z')`.
-    dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-  } else {
-    dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-  }
+  // ALWAYS `Millis`, even when they are zero: `2026-04-08T14:00:00.000Z`.
+  //
+  // That is what Luxon's `toISO()` returns, and therefore what a serialized
+  // model reads under `@adonisjs/lucid`. The compact form is Luxon's opt-in
+  // `toISO({ suppressMilliseconds: true })`.
+  //
+  // It also keeps ONE canonical form: this engine and the TypeScript side used
+  // to strip `.000` independently, each justified by matching the other, and
+  // an rrule expansion therefore disagreed with `DateTime.toISO()` on the same
+  // instant — the same value, two literals, across the NAPI boundary.
+  dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 #[cfg(test)]
@@ -1218,87 +1216,87 @@ mod tests {
 
   #[test]
   fn add_and_diff_work() {
-    let a = add("2026-01-15T10:00:00Z", 1, "month").unwrap();
-    assert_eq!(a, "2026-02-15T10:00:00Z");
-    let d = diff("2026-01-15T10:00:00Z", "2026-01-17T10:00:00Z", "days").unwrap();
+    let a = add("2026-01-15T10:00:00.000Z", 1, "month").unwrap();
+    assert_eq!(a, "2026-02-15T10:00:00.000Z");
+    let d = diff("2026-01-15T10:00:00.000Z", "2026-01-17T10:00:00.000Z", "days").unwrap();
     assert_eq!(d, 2);
   }
 
   #[test]
   fn rrule_monthly_works() {
     let out = rrule_expand(
-      "2026-01-15T15:00:00Z",
+      "2026-01-15T15:00:00.000Z",
       "FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3",
       10,
     )
     .unwrap();
     assert_eq!(out.len(), 3);
-    assert_eq!(out[0], "2026-01-15T15:00:00Z");
-    assert_eq!(out[1], "2026-02-15T15:00:00Z");
+    assert_eq!(out[0], "2026-01-15T15:00:00.000Z");
+    assert_eq!(out[1], "2026-02-15T15:00:00.000Z");
   }
 
   #[test]
   fn rrule_weekly_works() {
     let out = rrule_expand(
-      "2026-01-06T15:00:00Z",
+      "2026-01-06T15:00:00.000Z",
       "FREQ=WEEKLY;BYDAY=TU;COUNT=3",
       10,
     )
     .unwrap();
     assert_eq!(out.len(), 3);
-    assert_eq!(out[0], "2026-01-06T15:00:00Z");
+    assert_eq!(out[0], "2026-01-06T15:00:00.000Z");
   }
 
   #[test]
   fn rrule_byday_ordinal_last_sunday() {
     let out = rrule_expand(
-      "2026-01-01T12:00:00Z",
+      "2026-01-01T12:00:00.000Z",
       "FREQ=MONTHLY;BYDAY=-1SU;COUNT=3",
       10,
     )
     .unwrap();
-    assert_eq!(out[0], "2026-01-25T12:00:00Z");
-    assert_eq!(out[1], "2026-02-22T12:00:00Z");
-    assert_eq!(out[2], "2026-03-29T12:00:00Z");
+    assert_eq!(out[0], "2026-01-25T12:00:00.000Z");
+    assert_eq!(out[1], "2026-02-22T12:00:00.000Z");
+    assert_eq!(out[2], "2026-03-29T12:00:00.000Z");
   }
 
   #[test]
   fn rrule_hourly_multi_minute_with_bysetpos() {
     let out = rrule_expand(
-      "2026-01-01T10:00:00Z",
+      "2026-01-01T10:00:00.000Z",
       "FREQ=HOURLY;BYMINUTE=0,30;BYSECOND=0;BYSETPOS=-1;COUNT=3",
       10,
     )
     .unwrap();
     assert_eq!(out, vec![
-      "2026-01-01T10:30:00Z",
-      "2026-01-01T11:30:00Z",
-      "2026-01-01T12:30:00Z",
+      "2026-01-01T10:30:00.000Z",
+      "2026-01-01T11:30:00.000Z",
+      "2026-01-01T12:30:00.000Z",
     ]);
   }
 
   #[test]
   fn rrule_yearly_byweekno_and_byday() {
     let out = rrule_expand(
-      "2026-01-01T09:00:00Z",
+      "2026-01-01T09:00:00.000Z",
       "FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;COUNT=2",
       10,
     )
     .unwrap();
-    assert_eq!(out[0], "2027-01-04T09:00:00Z");
-    assert_eq!(out[1], "2028-01-03T09:00:00Z");
+    assert_eq!(out[0], "2027-01-04T09:00:00.000Z");
+    assert_eq!(out[1], "2028-01-03T09:00:00.000Z");
   }
 
   #[test]
   fn rrule_yearly_byyearday_negative() {
     let out = rrule_expand(
-      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00.000Z",
       "FREQ=YEARLY;BYYEARDAY=-1;COUNT=2",
       10,
     )
     .unwrap();
-    assert_eq!(out[0], "2026-12-31T00:00:00Z");
-    assert_eq!(out[1], "2027-12-31T00:00:00Z");
+    assert_eq!(out[0], "2026-12-31T00:00:00.000Z");
+    assert_eq!(out[1], "2027-12-31T00:00:00.000Z");
   }
 
   // === Audit Phase 1 — fix tests ===
@@ -1314,27 +1312,29 @@ mod tests {
   fn to_iso_drops_zero_milliseconds_for_compactness() {
     // When subseconds are zero, the compact form is preferred so the output
     // matches `Date.toISOString().replace('.000Z', 'Z')` from the JS side.
-    let result = add("2026-04-08T14:00:00Z", 1, "second").unwrap();
-    assert_eq!(result, "2026-04-08T14:00:01Z");
+    let result = add("2026-04-08T14:00:00.000Z", 1, "second").unwrap();
+    assert_eq!(result, "2026-04-08T14:00:01.000Z");
   }
 
   #[test]
   fn format_literal_brackets() {
     // `[Z]` is a literal Z, not a timezone token.
-    let result = format("2026-04-08T14:00:00Z", "YYYY-MM-DD[T]HH:mm:ss[Z]").unwrap();
+    let result = format("2026-04-08T14:00:00.000Z", "YYYY-MM-DD[T]HH:mm:ss[Z]").unwrap();
+    // The format tokens carry no milliseconds, so this stays compact — the
+    // canonical ISO form is `toISO()`, not a caller-chosen token string.
     assert_eq!(result, "2026-04-08T14:00:00Z");
   }
 
   #[test]
   fn format_year_only_no_z_corruption() {
     // `YYYY` followed by no token must not be corrupted.
-    let result = format("2026-04-08T14:00:00Z", "YYYY").unwrap();
+    let result = format("2026-04-08T14:00:00.000Z", "YYYY").unwrap();
     assert_eq!(result, "2026");
   }
 
   #[test]
   fn calendar_parts_isoweek_and_quarter() {
-    let parts = calendar_parts("2026-04-08T14:30:45Z").unwrap();
+    let parts = calendar_parts("2026-04-08T14:30:45.000Z").unwrap();
     assert_eq!(parts.year, 2026);
     assert_eq!(parts.month, 4);
     assert_eq!(parts.day, 8);
@@ -1349,7 +1349,7 @@ mod tests {
 
   #[test]
   fn calendar_parts_leap_year() {
-    let parts = calendar_parts("2024-02-29T00:00:00Z").unwrap();
+    let parts = calendar_parts("2024-02-29T00:00:00.000Z").unwrap();
     assert_eq!(parts.days_in_month, 29);
     assert_eq!(parts.days_in_year, 366);
     assert!(parts.is_leap_year);
@@ -1374,7 +1374,7 @@ mod tests {
   #[test]
   fn to_zone_paris_summer() {
     // 2026-07-15 14:00 UTC → 16:00 CEST (UTC+2)
-    let result = to_zone("2026-07-15T14:00:00Z", "Europe/Paris").unwrap();
+    let result = to_zone("2026-07-15T14:00:00.000Z", "Europe/Paris").unwrap();
     assert!(result.iso.contains("16:00:00"));
     assert_eq!(result.offset_minutes, 120);
   }
@@ -1382,7 +1382,7 @@ mod tests {
   #[test]
   fn to_zone_paris_winter() {
     // 2026-01-15 14:00 UTC → 15:00 CET (UTC+1)
-    let result = to_zone("2026-01-15T14:00:00Z", "Europe/Paris").unwrap();
+    let result = to_zone("2026-01-15T14:00:00.000Z", "Europe/Paris").unwrap();
     assert!(result.iso.contains("15:00:00"));
     assert_eq!(result.offset_minutes, 60);
   }
@@ -1390,7 +1390,7 @@ mod tests {
   #[test]
   fn to_zone_chatham_45min_offset() {
     // Pacific/Chatham is UTC+12:45 / +13:45
-    let result = to_zone("2026-01-15T00:00:00Z", "Pacific/Chatham").unwrap();
+    let result = to_zone("2026-01-15T00:00:00.000Z", "Pacific/Chatham").unwrap();
     // Summer in southern hemisphere → CHADT = UTC+13:45
     assert_eq!(result.offset_minutes, 825); // 13*60 + 45
   }
@@ -1400,7 +1400,7 @@ mod tests {
     // Europe/Paris springs forward on 2026-03-29 at 02:00 → 03:00.
     // Adding 1 day to 2026-03-28T10:00:00 UTC (= 11:00 CET) should land on
     // 2026-03-29T09:00:00 UTC (= 11:00 CEST), preserving wall-clock 11:00.
-    let result = add_in_zone("2026-03-28T10:00:00Z", 1, "day", "Europe/Paris").unwrap();
+    let result = add_in_zone("2026-03-28T10:00:00.000Z", 1, "day", "Europe/Paris").unwrap();
     // Parse the result and check the wall-clock time in Paris.
     let result_paris = to_zone(&result, "Europe/Paris").unwrap();
     assert!(result_paris.iso.contains("11:00:00"), "Expected wall-clock 11:00, got {}", result_paris.iso);
@@ -1411,7 +1411,7 @@ mod tests {
     // Europe/Paris falls back on 2026-10-25 at 03:00 → 02:00.
     // Adding 1 day to 2026-10-24T10:00:00 UTC (= 12:00 CEST) should land on
     // 2026-10-25T11:00:00 UTC (= 12:00 CET), preserving wall-clock 12:00.
-    let result = add_in_zone("2026-10-24T10:00:00Z", 1, "day", "Europe/Paris").unwrap();
+    let result = add_in_zone("2026-10-24T10:00:00.000Z", 1, "day", "Europe/Paris").unwrap();
     let result_paris = to_zone(&result, "Europe/Paris").unwrap();
     assert!(result_paris.iso.contains("12:00:00"), "Expected wall-clock 12:00, got {}", result_paris.iso);
   }
@@ -1419,15 +1419,15 @@ mod tests {
   #[test]
   fn diff_in_zone_month() {
     let result = diff_in_zone(
-      "2026-01-15T10:00:00Z", "2026-03-15T10:00:00Z", "month", "Europe/Paris"
+      "2026-01-15T10:00:00.000Z", "2026-03-15T10:00:00.000Z", "month", "Europe/Paris"
     ).unwrap();
     assert_eq!(result, 2);
   }
 
   #[test]
   fn zone_offset_summer_vs_winter() {
-    let summer = zone_offset("2026-07-15T12:00:00Z", "Europe/Paris").unwrap();
-    let winter = zone_offset("2026-01-15T12:00:00Z", "Europe/Paris").unwrap();
+    let summer = zone_offset("2026-07-15T12:00:00.000Z", "Europe/Paris").unwrap();
+    let winter = zone_offset("2026-01-15T12:00:00.000Z", "Europe/Paris").unwrap();
     assert_eq!(summer, 120); // CEST
     assert_eq!(winter, 60);  // CET
   }
@@ -1435,11 +1435,11 @@ mod tests {
   #[test]
   fn calendar_parts_iso_week_year_boundary() {
     // 2026-01-01 is a Thursday — falls in ISO week 1 of 2026.
-    let parts = calendar_parts("2026-01-01T00:00:00Z").unwrap();
+    let parts = calendar_parts("2026-01-01T00:00:00.000Z").unwrap();
     assert_eq!(parts.week_number, 1);
     assert_eq!(parts.week_year, 2026);
     // 2024-12-30 is a Monday — ISO week 1 of 2025 (week-numbering year shifts).
-    let parts = calendar_parts("2024-12-30T00:00:00Z").unwrap();
+    let parts = calendar_parts("2024-12-30T00:00:00.000Z").unwrap();
     assert_eq!(parts.week_number, 1);
     assert_eq!(parts.week_year, 2025);
   }

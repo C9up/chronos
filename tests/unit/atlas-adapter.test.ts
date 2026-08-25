@@ -25,27 +25,27 @@ describe("dateTimeAtlasAdapter", () => {
 			// wide ISO contract, not adapter behavior.
 			const dt = dateTimeAtlasAdapter.consume("2026-04-30T12:00:00.000Z");
 			expect(dt).toBeInstanceOf(DateTime);
-			expect(dt?.toISO()).toBe("2026-04-30T12:00:00Z");
+			expect(dt?.toISO()).toBe("2026-04-30T12:00:00.000Z");
 		});
 
 		it("lifts a JS Date into a DateTime instance", () => {
 			const date = new Date("2026-04-30T12:00:00.000Z");
 			const dt = dateTimeAtlasAdapter.consume(date);
 			expect(dt).toBeInstanceOf(DateTime);
-			expect(dt?.toISO()).toBe("2026-04-30T12:00:00Z");
+			expect(dt?.toISO()).toBe("2026-04-30T12:00:00.000Z");
 		});
 
 		it("lifts a number as epoch milliseconds", () => {
 			// 1714478400000 ms = 2024-04-30T12:00:00Z
 			const dt = dateTimeAtlasAdapter.consume(1714478400000);
 			expect(dt).toBeInstanceOf(DateTime);
-			expect(dt?.toISO()).toBe("2024-04-30T12:00:00Z");
+			expect(dt?.toISO()).toBe("2024-04-30T12:00:00.000Z");
 		});
 
 		it("lifts a bigint as epoch milliseconds (matches the number branch)", () => {
 			const dt = dateTimeAtlasAdapter.consume(1714478400000n);
 			expect(dt).toBeInstanceOf(DateTime);
-			expect(dt?.toISO()).toBe("2024-04-30T12:00:00Z");
+			expect(dt?.toISO()).toBe("2024-04-30T12:00:00.000Z");
 		});
 
 		it("returns null for null input", () => {
@@ -75,7 +75,7 @@ describe("dateTimeAtlasAdapter", () => {
 		it("emits the ISO 8601 string of a DateTime", () => {
 			const dt = new DateTime("2026-04-30T12:00:00.000Z");
 			// Same canonicalization caveat as the consume tests.
-			expect(dateTimeAtlasAdapter.prepare(dt)).toBe("2026-04-30T12:00:00Z");
+			expect(dateTimeAtlasAdapter.prepare(dt)).toBe("2026-04-30T12:00:00.000Z");
 		});
 
 		it("returns null for null / undefined input (symmetric with consume)", () => {
@@ -107,24 +107,33 @@ describe("dateTimeAtlasAdapter", () => {
 	});
 
 	describe("round-trip identity (consume → prepare) — canonical chronos form", () => {
-		// Each row: [label, input, expected canonical output]. Chronos's
-		// `normalizeIso` strips `.000Z` → `Z`; subsecond precision (e.g. `.123Z`)
-		// is preserved verbatim. The adapter is faithful to that contract.
+		// Each row: [label, input, expected canonical output]. The canonical form
+		// keeps milliseconds, as Luxon's `toISO()` does — so a round-trip is the
+		// identity, and a serialized model reads the same as it would under
+		// `@adonisjs/lucid`. The adapter is faithful to that contract.
 		const cases: Array<[string, string, string]> = [
-			["UTC midday", "2026-04-30T12:00:00.000Z", "2026-04-30T12:00:00Z"],
+			["UTC midday", "2026-04-30T12:00:00.000Z", "2026-04-30T12:00:00.000Z"],
 			[
 				"fractional milliseconds preserved",
 				"2026-04-30T12:00:00.123Z",
 				"2026-04-30T12:00:00.123Z",
 			],
-			["leap day Feb 29", "2024-02-29T00:00:00.000Z", "2024-02-29T00:00:00Z"],
-			["epoch boundary", "1970-01-01T00:00:00.000Z", "1970-01-01T00:00:00Z"],
+			[
+				"leap day Feb 29",
+				"2024-02-29T00:00:00.000Z",
+				"2024-02-29T00:00:00.000Z",
+			],
+			[
+				"epoch boundary",
+				"1970-01-01T00:00:00.000Z",
+				"1970-01-01T00:00:00.000Z",
+			],
 			// Year > 9999 — JS Date supports up to year 275760 with the extended
 			// `±YYYYYY` ISO form. Per AC line 264 ("year > 9999").
 			[
 				"far future (year 10000)",
 				"+010000-01-01T00:00:00.000Z",
-				"+010000-01-01T00:00:00Z",
+				"+010000-01-01T00:00:00.000Z",
 			],
 		];
 		for (const [label, input, expected] of cases) {
