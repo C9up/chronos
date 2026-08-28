@@ -6,45 +6,17 @@
  * for a pure-TS fallback.
  */
 
-export interface NativeChronos {
-	add(iso: string, amount: number, unit: string): string;
-	diff(aIso: string, bIso: string, unit: string): number;
-	startOf(iso: string, unit: string): string;
-	endOf(iso: string, unit: string): string;
-	format(iso: string, pattern: string): string;
-	validateTimezone(zone: string): string;
-	toZone(
-		utcIso: string,
-		zone: string,
-	): { iso: string; offsetMinutes: number; zoneName: string };
-	addInZone(utcIso: string, amount: number, unit: string, zone: string): string;
-	startOfInZone(utcIso: string, unit: string, zone: string): string;
-	endOfInZone(utcIso: string, unit: string, zone: string): string;
-	diffInZone(aUtc: string, bUtc: string, unit: string, zone: string): number;
-	zoneOffset(utcIso: string, zone: string): number;
-	fromLocal(naiveIso: string, zone: string): string;
-	parseRfc2822(input: string): string;
-	parseSql(input: string): string;
-	parseHttp(input: string): string;
-	rruleExpand(startIso: string, rrule: string, limit: number): string[];
-	calendarParts(iso: string): {
-		year: number;
-		month: number;
-		day: number;
-		hour: number;
-		minute: number;
-		second: number;
-		millisecond: number;
-		weekday: number;
-		weekNumber: number;
-		weekYear: number;
-		ordinal: number;
-		quarter: number;
-		daysInMonth: number;
-		daysInYear: number;
-		isLeapYear: boolean;
-	};
-}
+/**
+ * The engine's surface, as the Rust declares it.
+ *
+ * Derived from `./native/generated.js` — written by `pnpm build:napi-types`
+ * from napi-derive's own `type-def` output — rather than restated here, where
+ * nothing would notice a `pub fn` gaining a parameter or changing its return.
+ *
+ * The WASM build is held to the same shape below, so the two engines cannot
+ * quietly diverge either: the browser glue has to export what the Rust does.
+ */
+export type NativeChronos = typeof import("./native/generated.js");
 
 let native: NativeChronos | undefined;
 let loadError: unknown;

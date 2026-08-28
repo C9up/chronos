@@ -28,7 +28,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:rust": "cargo build --release",
-    "build:napi": "cargo build --release && node scripts/copy-napi.mjs",
+    "build:napi": "cargo build --release && pnpm build:napi-types && node scripts/copy-napi.mjs",
+    "build:napi-types": "node scripts/build-napi-types.mjs",
     "test": "vitest run",
     "test:rust": "cargo test",
     "test:napi": "node scripts/verify-napi.mjs",
