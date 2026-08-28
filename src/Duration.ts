@@ -51,6 +51,12 @@ const MS_PER: Record<DurationUnit, number> = {
 export class Duration {
 	readonly #values: Readonly<Required<DurationObject>>;
 
+	/**
+	 * Private because a Duration is only ever built through the named factories, which normalise the units.
+	 *
+	 * `private` and not `#`: a private CONSTRUCTOR has no native form. It is the
+	 * one place the keyword expresses something `#` cannot.
+	 */
 	private constructor(values: DurationObject) {
 		this.#values = {
 			years: values.years ?? 0,

@@ -14,6 +14,12 @@ export class Interval {
 	readonly #start: DateTime;
 	readonly #end: DateTime;
 
+	/**
+	 * Private because an Interval is only ever built through the named factories, which validate the bounds.
+	 *
+	 * `private` and not `#`: a private CONSTRUCTOR has no native form. It is the
+	 * one place the keyword expresses something `#` cannot.
+	 */
 	private constructor(start: DateTime, end: DateTime) {
 		if (start.isAfter(end)) {
 			throw new Error("Interval start must be <= end");
