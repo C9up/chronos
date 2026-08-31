@@ -67,9 +67,87 @@ export interface CalendarParts {
 
 // ─── Internal helpers ────────────────────────────────────────
 
+const MONTH_NAMES = [
+	"January",
+	"February",
+	"March",
+	"April",
+	"May",
+	"June",
+	"July",
+	"August",
+	"September",
+	"October",
+	"November",
+	"December",
+];
+
+function isLeapYearOf(year: number): boolean {
+	return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function daysPerMonthOf(year: number): number[] {
+	return [
+		31,
+		isLeapYearOf(year) ? 29 : 28,
+		31,
+		30,
+		31,
+		30,
+		31,
+		31,
+		30,
+		31,
+		30,
+		31,
+	];
+}
+
+function daysInMonthOf(year: number, month: number): number {
+	return daysPerMonthOf(year)[month - 1];
+}
+
+/**
+ * Refuse a calendar date that does not exist, instead of sliding to the next
+ * one that does.
+ *
+ * `new Date('2026-02-30')` answers 2026-03-02: the overflow semantics are right
+ * for arithmetic — adding a month to January 31st has to land somewhere — and
+ * wrong for reading input, where the same slide turns a typo into a fact. The
+ * inconsistency was the dangerous part: '2026-13-45' threw while '2026-02-30'
+ * came back as a date, so a caller wrapping this in try/catch had covered the
+ * loud half and left the half that writes something false to the database.
+ *
+ * `fromObject` has always refused the same input; this is that check on the
+ * door that was missing it. Only the written date is examined, never the
+ * instant it resolves to, so an offset that legitimately moves the UTC day
+ * ('2026-08-10T23:00:00-05:00' → the 11th) is untouched.
+ */
+const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})(?=$|[T ])/;
+
+function assertCalendarDateExists(raw: string): void {
+	const match = CALENDAR_DATE.exec(raw);
+	// Anything else — RFC 2822, a bare year, a basic-format string — is left to
+	// `Date`, which already refuses what it cannot read.
+	if (!match) return;
+	const year = Number(match[1]);
+	const month = Number(match[2]);
+	const day = Number(match[3]);
+	if (month < 1 || month > 12) {
+		throw new Error(`Invalid date '${raw}': there is no month ${month}.`);
+	}
+	const lastDay = daysInMonthOf(year, month);
+	if (day < 1 || day > lastDay) {
+		throw new Error(
+			`Invalid date '${raw}': ${MONTH_NAMES[month - 1]} ${year} has ${lastDay} days, so there is no day ${day}.`,
+		);
+	}
+}
+
 function toIso(value: DateInput): string {
 	if (value instanceof DateTime) return value.toISO();
 	if (value instanceof Date) return normalizeIso(value.toISOString());
+	if (typeof value === "string") assertCalendarDateExists(value);
 	return normalizeIso(new Date(value).toISOString());
 }
 
@@ -143,21 +221,8 @@ function calendarPartsFromIso(iso: string): CalendarParts {
 	const second = Number(isoMatch[6]);
 	const millisecond =
 		isoMatch[7] != null ? Math.round(Number(`0.${isoMatch[7]}`) * 1000) : 0;
-	const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-	const daysPerMonth = [
-		31,
-		isLeapYear ? 29 : 28,
-		31,
-		30,
-		31,
-		30,
-		31,
-		31,
-		30,
-		31,
-		30,
-		31,
-	];
+	const isLeapYear = isLeapYearOf(year);
+	const daysPerMonth = daysPerMonthOf(year);
 	const daysInMonth = daysPerMonth[month - 1];
 	const daysInYear = isLeapYear ? 366 : 365;
 	let ordinal = day;
