@@ -35,8 +35,16 @@ pub fn to_zone(utc_iso: &str, zone: &str) -> Result<JsValue, JsValue> {
     let result = chronos_engine::to_zone(utc_iso, zone).map_err(|e| JsValue::from_str(&e))?;
     let obj = js_sys::Object::new();
     js_sys::Reflect::set(&obj, &"iso".into(), &JsValue::from_str(&result.iso))?;
-    js_sys::Reflect::set(&obj, &"offsetMinutes".into(), &JsValue::from_f64(result.offset_minutes as f64))?;
-    js_sys::Reflect::set(&obj, &"zoneName".into(), &JsValue::from_str(&result.zone_name))?;
+    js_sys::Reflect::set(
+        &obj,
+        &"offsetMinutes".into(),
+        &JsValue::from_f64(result.offset_minutes as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"zoneName".into(),
+        &JsValue::from_str(&result.zone_name),
+    )?;
     Ok(obj.into())
 }
 
@@ -87,8 +95,8 @@ pub fn parse_http(input: &str) -> Result<String, JsValue> {
 
 #[wasm_bindgen]
 pub fn rrule_expand(start_iso: &str, rrule: &str, limit: usize) -> Result<JsValue, JsValue> {
-    let dates = chronos_engine::rrule_expand(start_iso, rrule, limit)
-        .map_err(|e| JsValue::from_str(&e))?;
+    let dates =
+        chronos_engine::rrule_expand(start_iso, rrule, limit).map_err(|e| JsValue::from_str(&e))?;
     let arr = js_sys::Array::new();
     for d in dates {
         arr.push(&JsValue::from_str(&d));
@@ -106,14 +114,50 @@ pub fn calendar_parts(iso: &str) -> Result<JsValue, JsValue> {
     js_sys::Reflect::set(&obj, &"hour".into(), &JsValue::from_f64(p.hour as f64))?;
     js_sys::Reflect::set(&obj, &"minute".into(), &JsValue::from_f64(p.minute as f64))?;
     js_sys::Reflect::set(&obj, &"second".into(), &JsValue::from_f64(p.second as f64))?;
-    js_sys::Reflect::set(&obj, &"millisecond".into(), &JsValue::from_f64(p.millisecond as f64))?;
-    js_sys::Reflect::set(&obj, &"weekday".into(), &JsValue::from_f64(p.weekday as f64))?;
-    js_sys::Reflect::set(&obj, &"weekNumber".into(), &JsValue::from_f64(p.week_number as f64))?;
-    js_sys::Reflect::set(&obj, &"weekYear".into(), &JsValue::from_f64(p.week_year as f64))?;
-    js_sys::Reflect::set(&obj, &"ordinal".into(), &JsValue::from_f64(p.ordinal as f64))?;
-    js_sys::Reflect::set(&obj, &"quarter".into(), &JsValue::from_f64(p.quarter as f64))?;
-    js_sys::Reflect::set(&obj, &"daysInMonth".into(), &JsValue::from_f64(p.days_in_month as f64))?;
-    js_sys::Reflect::set(&obj, &"daysInYear".into(), &JsValue::from_f64(p.days_in_year as f64))?;
-    js_sys::Reflect::set(&obj, &"isLeapYear".into(), &JsValue::from_bool(p.is_leap_year))?;
+    js_sys::Reflect::set(
+        &obj,
+        &"millisecond".into(),
+        &JsValue::from_f64(p.millisecond as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"weekday".into(),
+        &JsValue::from_f64(p.weekday as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"weekNumber".into(),
+        &JsValue::from_f64(p.week_number as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"weekYear".into(),
+        &JsValue::from_f64(p.week_year as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"ordinal".into(),
+        &JsValue::from_f64(p.ordinal as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"quarter".into(),
+        &JsValue::from_f64(p.quarter as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"daysInMonth".into(),
+        &JsValue::from_f64(p.days_in_month as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"daysInYear".into(),
+        &JsValue::from_f64(p.days_in_year as f64),
+    )?;
+    js_sys::Reflect::set(
+        &obj,
+        &"isLeapYear".into(),
+        &JsValue::from_bool(p.is_leap_year),
+    )?;
     Ok(obj.into())
 }
