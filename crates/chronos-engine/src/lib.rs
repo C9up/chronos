@@ -18,18 +18,57 @@ pub fn add(iso: &str, amount: i64, unit: &str) -> Result<String, String> {
   Ok(to_iso(out))
 }
 
-pub fn diff(a_iso: &str, b_iso: &str, unit: &str) -> Result<i64, String> {
+/// Whole calendar steps between two instants, plus the fraction of the step
+/// that holds the remainder.
+///
+/// A month is not a fixed number of milliseconds, so the remainder is measured
+/// against the month it actually falls in: from February 28th to March 15th is
+/// 15 days out of February's 28, not out of an averaged 30. Dividing by an
+/// average is what makes a whole-month gap come back as 0.98 of one.
+fn calendar_diff(a: DateTime<Utc>, b: DateTime<Utc>, months_per_step: i64) -> f64 {
+  let sign = if a >= b { 1.0 } else { -1.0 };
+  let (earlier, later) = if a >= b { (b, a) } else { (a, b) };
+
+  // Start from the month arithmetic, then walk to the true boundary: clamping
+  // (January 31st + 1 month is February 28th) can put the estimate on either
+  // side by one.
+  let months = (later.year() as i64 - earlier.year() as i64) * 12
+    + (later.month() as i64 - earlier.month() as i64);
+  let mut steps = (months / months_per_step).max(0);
+  while steps > 0 && add_months(earlier, steps * months_per_step) > later {
+    steps -= 1;
+  }
+  while add_months(earlier, (steps + 1) * months_per_step) <= later {
+    steps += 1;
+  }
+
+  let cursor = add_months(earlier, steps * months_per_step);
+  let next = add_months(earlier, (steps + 1) * months_per_step);
+  let span = (next - cursor).num_milliseconds() as f64;
+  let rest = (later - cursor).num_milliseconds() as f64;
+  let fraction = if span == 0.0 { 0.0 } else { rest / span };
+  (steps as f64 + fraction) * sign
+}
+
+/// `a - b`, in the given unit, signed and fractional.
+///
+/// Both halves of that used to be wrong. The subtraction ran `b - a`, so the
+/// sign was the opposite of what every caller coming from Luxon expects — a
+/// date two days ahead answered -2. And the result was an `i64`, so a gap of
+/// five and a half months came back as 5, with the half silently gone.
+pub fn diff(a_iso: &str, b_iso: &str, unit: &str) -> Result<f64, String> {
   let a = parse_iso(a_iso)?;
   let b = parse_iso(b_iso)?;
-  let delta = b - a;
+  let ms = (a - b).num_milliseconds() as f64;
   let out = match unit.to_ascii_lowercase().as_str() {
-    "seconds" | "second" => delta.num_seconds(),
-    "minutes" | "minute" => delta.num_minutes(),
-    "hours" | "hour" => delta.num_hours(),
-    "days" | "day" => delta.num_days(),
-    "weeks" | "week" => delta.num_weeks(),
-    "months" | "month" => months_between(a, b),
-    "years" | "year" => months_between(a, b) / 12,
+    "milliseconds" | "millisecond" => ms,
+    "seconds" | "second" => ms / 1_000.0,
+    "minutes" | "minute" => ms / 60_000.0,
+    "hours" | "hour" => ms / 3_600_000.0,
+    "days" | "day" => ms / 86_400_000.0,
+    "weeks" | "week" => ms / 604_800_000.0,
+    "months" | "month" => calendar_diff(a, b, 1),
+    "years" | "year" => calendar_diff(a, b, 12),
     _ => return Err(format!("Unsupported unit: {}", unit)),
   };
   Ok(out)
@@ -264,23 +303,62 @@ pub fn add_in_zone(utc_iso: &str, amount: i64, unit: &str, zone: &str) -> Result
 
 /// Diff two UTC instants with calendar-unit interpretation in the given zone.
 /// Month/year diffs use the wall-clock date in the zone, not the UTC date.
-pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<i64, String> {
+/// Move a zoned instant by whole months, keeping the wall-clock time.
+///
+/// The same DST policy `resolve_local` applies elsewhere: an ambiguous local
+/// time takes the first occurrence, and one that falls in a spring-forward gap
+/// steps forward to the first that exists.
+fn add_months_in_zone(dt: DateTime<Tz>, months: i64) -> DateTime<Tz> {
+  use chrono::LocalResult;
+  let tz = dt.timezone();
+  let naive = add_months_naive(dt.naive_local(), months);
+  match tz.from_local_datetime(&naive) {
+    LocalResult::Single(out) => out,
+    LocalResult::Ambiguous(first, _) => first,
+    LocalResult::None => {
+      for step in &[15, 30, 45, 60, 75, 90, 105, 120] {
+        let shifted = naive + Duration::minutes(*step);
+        if let LocalResult::Single(out) = tz.from_local_datetime(&shifted) {
+          return out;
+        }
+      }
+      dt
+    }
+  }
+}
+
+pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<f64, String> {
   let unit_lower = unit.to_ascii_lowercase();
   // Clock units don't care about zone — defer to the existing UTC diff.
   match unit_lower.as_str() {
-    "seconds" | "second" | "minutes" | "minute" | "hours" | "hour" |
-    "days" | "day" | "weeks" | "week" => diff(a_utc, b_utc, unit),
+    "milliseconds" | "millisecond" | "seconds" | "second" | "minutes" | "minute"
+    | "hours" | "hour" | "days" | "day" | "weeks" | "week" => diff(a_utc, b_utc, unit),
     "months" | "month" | "years" | "year" => {
       let tz: Tz = zone.parse().map_err(|_| format!("Unknown timezone: {}", zone))?;
       let a = parse_iso(a_utc)?.with_timezone(&tz);
       let b = parse_iso(b_utc)?.with_timezone(&tz);
-      let sign: i64 = if b >= a { 1 } else { -1 };
-      let (earlier, later) = if b >= a { (a, b) } else { (b, a) };
-      let mut months = (later.year() as i64 - earlier.year() as i64) * 12
+      // The calendar walk happens in the zone, where a month boundary sits
+      // where the reader's calendar puts it, then the fraction is measured on
+      // the same instants — so `a - b` and the fractional result match the UTC
+      // path exactly, only anchored to local months.
+      let months_per_step: i64 = if unit_lower.starts_with("year") { 12 } else { 1 };
+      let sign = if a >= b { 1.0 } else { -1.0 };
+      let (earlier, later) = if a >= b { (b, a) } else { (a, b) };
+      let months = (later.year() as i64 - earlier.year() as i64) * 12
         + (later.month() as i64 - earlier.month() as i64);
-      if later.day() < earlier.day() { months -= 1; }
-      let result = if unit_lower.starts_with("year") { months / 12 } else { months };
-      Ok(result * sign)
+      let mut steps = (months / months_per_step).max(0);
+      while steps > 0 && add_months_in_zone(earlier, steps * months_per_step) > later {
+        steps -= 1;
+      }
+      while add_months_in_zone(earlier, (steps + 1) * months_per_step) <= later {
+        steps += 1;
+      }
+      let cursor = add_months_in_zone(earlier, steps * months_per_step);
+      let next = add_months_in_zone(earlier, (steps + 1) * months_per_step);
+      let span = (next - cursor).num_milliseconds() as f64;
+      let rest = (later - cursor).num_milliseconds() as f64;
+      let fraction = if span == 0.0 { 0.0 } else { rest / span };
+      Ok((steps as f64 + fraction) * sign)
     }
     _ => Err(format!("Unsupported unit: {}", unit)),
   }
@@ -1130,21 +1208,6 @@ fn parse_weekday(input: &str) -> Result<Weekday, String> {
   }
 }
 
-/// Calendar-aware month diff matching Luxon's contract: count the whole months
-/// that have *fully passed*. `Jan 31 → Feb 28` = 0 (because there is no
-/// Feb 31 to complete one full month). `Jan 31 → Mar 1` = 1.
-fn months_between(start: DateTime<Utc>, end: DateTime<Utc>) -> i64 {
-  let sign: i64 = if end >= start { 1 } else { -1 };
-  let (earlier, later) = if end >= start { (start, end) } else { (end, start) };
-  let mut months = (later.year() as i64 - earlier.year() as i64) * 12
-    + (later.month() as i64 - earlier.month() as i64);
-  // Clamp: if the day-of-month in `later` hasn't reached `earlier`'s day,
-  // we haven't completed a full month yet — truncate toward zero.
-  if later.day() < earlier.day() {
-    months -= 1;
-  }
-  months * sign
-}
 
 fn months_between_dates(start: NaiveDate, end: NaiveDate) -> i32 {
   (end.year() - start.year()) * 12 + end.month() as i32 - start.month() as i32
@@ -1218,8 +1281,9 @@ mod tests {
   fn add_and_diff_work() {
     let a = add("2026-01-15T10:00:00.000Z", 1, "month").unwrap();
     assert_eq!(a, "2026-02-15T10:00:00.000Z");
+    // `a - b`, as Luxon spells it: the 15th is two days BEFORE the 17th.
     let d = diff("2026-01-15T10:00:00.000Z", "2026-01-17T10:00:00.000Z", "days").unwrap();
-    assert_eq!(d, 2);
+    assert_eq!(d, -2.0);
   }
 
   #[test]
@@ -1421,7 +1485,7 @@ mod tests {
     let result = diff_in_zone(
       "2026-01-15T10:00:00.000Z", "2026-03-15T10:00:00.000Z", "month", "Europe/Paris"
     ).unwrap();
-    assert_eq!(result, 2);
+    assert_eq!(result, -2.0);
   }
 
   #[test]

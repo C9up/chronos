@@ -8,8 +8,8 @@ pub fn add(iso: String, amount: i64, unit: String) -> Result<String> {
 }
 
 #[napi]
-pub fn diff(a_iso: String, b_iso: String, unit: String) -> Result<i64> {
-  let result = catch_unwind(|| -> std::result::Result<i64, String> { chronos_engine::diff(&a_iso, &b_iso, &unit) });
+pub fn diff(a_iso: String, b_iso: String, unit: String) -> Result<f64> {
+  let result = catch_unwind(|| -> std::result::Result<f64, String> { chronos_engine::diff(&a_iso, &b_iso, &unit) });
   match result {
     Ok(Ok(value)) => Ok(value),
     Ok(Err(e)) => Err(Error::from_reason(e)),
@@ -106,7 +106,7 @@ pub fn end_of_in_zone(utc_iso: String, unit: String, zone: String) -> Result<Str
 }
 
 #[napi]
-pub fn diff_in_zone(a_utc: String, b_utc: String, unit: String, zone: String) -> Result<i64> {
+pub fn diff_in_zone(a_utc: String, b_utc: String, unit: String, zone: String) -> Result<f64> {
   let result = catch_unwind(|| chronos_engine::diff_in_zone(&a_utc, &b_utc, &unit, &zone));
   match result {
     Ok(Ok(v)) => Ok(v),

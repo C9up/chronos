@@ -18,7 +18,9 @@ describe("Chronos", () => {
 
 	it("supports diff and boundaries", () => {
 		const a = new DateTime("2026-01-15T10:00:00Z");
-		expect(a.diff("2026-01-17T10:00:00.000Z", "day")).toBe(2);
+		// `a.diff(b)` is `a - b`, as Luxon spells it: the 15th is two days
+		// BEFORE the 17th, so the answer is negative.
+		expect(a.diff("2026-01-17T10:00:00.000Z", "day")).toBe(-2);
 
 		const b = new DateTime("2026-01-15T10:34:55.000Z");
 		expect(b.startOf("day").toISO()).toBe("2026-01-15T00:00:00.000Z");
@@ -171,25 +173,55 @@ describe("Chronos", () => {
 
 // === Epic 36 Phase 1 — Audit fix tests ====================================================
 
-describe("chronos > diff month/year parity (36.1)", () => {
-	it("diff month: Jan 15 → Mar 15 = 2 months", () => {
+/**
+ * `diff` answers `this - other`, signed and fractional, which is what Luxon
+ * answers. Every number below was taken from Luxon and matches to the last
+ * digit.
+ *
+ * It used to answer `other - this`, truncated to a whole unit: the sign was
+ * inverted against the library the ecosystem mirrors, and five and a half
+ * months came back as five.
+ */
+describe("chronos > diff matches Luxon", () => {
+	it("is negative when the other instant is later", () => {
 		const dt = new DateTime("2026-01-15T10:00:00Z");
-		expect(dt.diff("2026-03-15T10:00:00.000Z", "month")).toBe(2);
+		expect(dt.diff("2026-03-15T10:00:00.000Z", "month")).toBe(-2);
 	});
 
-	it("diff month: Jan 31 → Feb 28 = 0 months (not yet one full month)", () => {
-		const dt = new DateTime("2026-01-31T00:00:00.000Z");
-		expect(dt.diff("2026-02-28T00:00:00.000Z", "month")).toBe(0);
-	});
-
-	it("diff year: Jan 15 2024 → Jan 15 2026 = 2 years", () => {
-		const dt = new DateTime("2024-01-15T00:00:00.000Z");
-		expect(dt.diff("2026-01-15T00:00:00.000Z", "year")).toBe(2);
-	});
-
-	it("diff month negative: Mar 15 → Jan 15 = -2", () => {
+	it("is positive when the other instant is earlier", () => {
 		const dt = new DateTime("2026-03-15T00:00:00.000Z");
-		expect(dt.diff("2026-01-15T00:00:00.000Z", "month")).toBe(-2);
+		expect(dt.diff("2026-01-15T00:00:00.000Z", "month")).toBe(2);
+	});
+
+	it("counts a clamped month as whole", () => {
+		// January 31st plus one month is February 28th, so February 28th is
+		// exactly one month away — not "not quite one", which is what the
+		// truncating version answered.
+		const dt = new DateTime("2026-01-31T00:00:00.000Z");
+		expect(dt.diff("2026-02-28T00:00:00.000Z", "month")).toBe(-1);
+	});
+
+	it("counts whole years the same way", () => {
+		const dt = new DateTime("2024-01-15T00:00:00.000Z");
+		expect(dt.diff("2026-01-15T00:00:00.000Z", "year")).toBe(-2);
+	});
+
+	it("keeps the fraction instead of truncating it", () => {
+		const dt = new DateTime("2026-06-05T14:30:00Z");
+		expect(dt.diff("2026-01-01T00:00:00Z", "day")).toBeCloseTo(
+			155.60416666666666,
+			10,
+		);
+		expect(dt.diff("2026-01-01T00:00:00Z", "hour")).toBe(3734.5);
+	});
+
+	it("measures a partial month against the month it falls in", () => {
+		// 15 days and 10 hours into a 28-day February, not into an averaged 30.
+		const dt = new DateTime("2026-03-15T10:00:00Z");
+		expect(dt.diff("2026-02-28T00:00:00Z", "month")).toBeCloseTo(
+			0.5505952380952381,
+			10,
+		);
 	});
 });
 

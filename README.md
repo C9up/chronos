@@ -27,7 +27,7 @@ d.setZone('Europe/Zurich')
  .toZonedISO()                      // 2026-06-05T16:30:00+02:00
 d.format('DD/MM/YYYY HH:mm')        // 05/06/2026 14:30
 d.startOf('month').toISO()          // 2026-06-01T00:00:00.000Z
-d.diff('2026-01-01', 'day')         // -155  (other minus this)
+d.diff('2026-01-01', 'day')         // 155.604   (a minus b, fractional)
 ```
 
 `at()` is the same thing, shorter: `at('2026-06-05')`.

@@ -103,12 +103,14 @@ describe("chronos > DateTime > arithmetic in zones", () => {
 		expect(next.format("YYYY-MM-DD")).toMatch(/^2026-02-/);
 	});
 
-	it("diff('year') across years in zone returns the integer year delta (signed)", () => {
+	it("diff('year') in a zone is signed the same way as in UTC", () => {
 		const a = new DateTime("2026-01-15T00:00:00Z").setZone("Europe/Paris");
 		const b = new DateTime("2025-01-15T00:00:00Z");
-		// `a.diff(b)` may return signed delta in either direction depending on
-		// the engine convention — assert the magnitude only.
-		expect(Math.abs(a.diff(b, "year"))).toBeGreaterThanOrEqual(1);
+		// This used to assert the magnitude only, with a comment saying the
+		// direction depended on the engine — which is how an inverted sign
+		// stayed unnoticed. The direction is `a - b`, and `a` is a year later.
+		expect(a.diff(b, "year")).toBe(1);
+		expect(b.diff(a, "year")).toBe(-1);
 	});
 
 	it("minus(n, unit) is the inverse of plus(n, unit) for hours", () => {

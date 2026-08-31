@@ -6,7 +6,7 @@ pub fn add(iso: &str, amount: i64, unit: &str) -> Result<String, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn diff(a_iso: &str, b_iso: &str, unit: &str) -> Result<i64, JsValue> {
+pub fn diff(a_iso: &str, b_iso: &str, unit: &str) -> Result<f64, JsValue> {
     chronos_engine::diff(a_iso, b_iso, unit).map_err(|e| JsValue::from_str(&e))
 }
 
@@ -56,7 +56,7 @@ pub fn end_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String, J
 }
 
 #[wasm_bindgen]
-pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<i64, JsValue> {
+pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<f64, JsValue> {
     chronos_engine::diff_in_zone(a_utc, b_utc, unit, zone).map_err(|e| JsValue::from_str(&e))
 }
 
