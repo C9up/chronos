@@ -7,7 +7,7 @@
  * fact stored in a database.
  */
 import { describe, expect, it } from "vitest";
-import { DateTime } from "../../src/index.js";
+import { DateTime, Interval } from "../../src/index.js";
 
 describe("chronos > a date that does not exist is refused, not slid forward", () => {
 	// `new Date('2026-02-30')` answers March 2nd. Overflow is right for
@@ -53,5 +53,42 @@ describe("chronos > a date that does not exist is refused, not slid forward", ()
 
 	it("refuses through the constructor too, not only through from()", () => {
 		expect(() => new DateTime("2026-02-30")).toThrow(/no day 30/);
+	});
+});
+
+describe("chronos > Interval units are named, not guessed", () => {
+	const june = Interval.fromDateTimes(
+		DateTime.from("2026-06-01"),
+		DateTime.from("2026-07-01"),
+	);
+
+	it("accepts the plural spelling durations use", () => {
+		expect(june.length("days")).toBe(30);
+	});
+
+	it("accepts the singular spelling DateTime uses", () => {
+		// The table was keyed plural and fell back to 1 for anything else, so
+		// this answered 2592000000 — milliseconds, presented as days.
+		expect(june.length("day")).toBe(30);
+	});
+
+	// TypeScript already refuses an unknown unit at the call site, so these go
+	// through `Reflect.apply` — the way a JavaScript consumer reaches the same
+	// method, and the only way the runtime guard can be exercised at all.
+	it("refuses a unit it does not know instead of measuring milliseconds", () => {
+		expect(() => Reflect.apply(june.length, june, ["fortnight"])).toThrow(
+			/'fortnight' is not a unit/,
+		);
+	});
+
+	it("refuses an unknown unit in splitBy, which a silent 1ms step would explode", () => {
+		// A one-millisecond step over this interval is 2.6 billion sub-intervals.
+		expect(() =>
+			Reflect.apply(june.splitBy, june, [{ amount: 1, unit: "fortnight" }]),
+		).toThrow(/is not a unit/);
+	});
+
+	it("splits on a real unit", () => {
+		expect(june.splitBy({ amount: 1, unit: "week" })).toHaveLength(5);
 	});
 });

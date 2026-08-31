@@ -10,6 +10,42 @@
 import { type DateInput, DateTime, type DateUnit } from "./DateTime.js";
 import { Duration, type DurationUnit } from "./Duration.js";
 
+/**
+ * Milliseconds in one unit, refusing a unit it does not know.
+ *
+ * Singular and plural both resolve, as they do upstream in Luxon: the rest of
+ * chronos spells units in the singular (`plus(1, "day")`) while durations
+ * spell them in the plural (`{ days: 1 }`), and a reader moving between the
+ * two should not have to remember which door they are at.
+ *
+ * The table used to answer `1` for anything it did not recognise, so
+ * `length("day")` returned 345600000 — milliseconds, presented as days — and
+ * `splitBy` turned an unknown unit into a one-millisecond step, which on a
+ * four-day interval is 345 million sub-intervals. Both were silent. An unknown
+ * unit is a mistake in the calling code and says so now.
+ */
+const MS_PER_UNIT: Record<string, number> = {
+	year: 365.25 * 86400000,
+	month: 30 * 86400000,
+	week: 7 * 86400000,
+	day: 86400000,
+	hour: 3600000,
+	minute: 60000,
+	second: 1000,
+	millisecond: 1,
+};
+
+function msPerUnit(unit: string, caller: string): number {
+	// Plural is the durations spelling; singular is the DateTime one.
+	const ms = MS_PER_UNIT[unit.endsWith("s") ? unit.slice(0, -1) : unit];
+	if (ms === undefined) {
+		throw new Error(
+			`${caller}: '${unit}' is not a unit. Use one of ${Object.keys(MS_PER_UNIT).join(", ")} (plural accepted).`,
+		);
+	}
+	return ms;
+}
+
 export class Interval {
 	readonly #start: DateTime;
 	readonly #end: DateTime;
@@ -63,19 +99,9 @@ export class Interval {
 	}
 
 	/** Length in the given unit (approximate for calendar units). */
-	length(unit: DurationUnit = "milliseconds"): number {
+	length(unit: DurationUnit | DateUnit = "milliseconds"): number {
 		const ms = this.#end.toMillis() - this.#start.toMillis();
-		const MS_PER: Record<string, number> = {
-			years: 365.25 * 86400000,
-			months: 30 * 86400000,
-			weeks: 7 * 86400000,
-			days: 86400000,
-			hours: 3600000,
-			minutes: 60000,
-			seconds: 1000,
-			milliseconds: 1,
-		};
-		return ms / (MS_PER[unit] ?? 1);
+		return ms / msPerUnit(unit, "Interval.length");
 	}
 
 	/** Duration object between start and end. */
@@ -168,18 +194,9 @@ export class Interval {
 
 	/** Split this interval into N sub-intervals of roughly equal `duration` length. */
 	splitBy(duration: Duration | { amount: number; unit: DateUnit }): Interval[] {
-		const unitMs: Record<string, number> = {
-			year: 365.25 * 86400000,
-			month: 30 * 86400000,
-			week: 7 * 86400000,
-			day: 86400000,
-			hour: 3600000,
-			minute: 60000,
-			second: 1000,
-		};
 		const stepMs =
 			"amount" in duration
-				? duration.amount * (unitMs[duration.unit] ?? 1)
+				? duration.amount * msPerUnit(duration.unit, "Interval.splitBy")
 				: duration.as("milliseconds");
 		if (stepMs <= 0) throw new Error("splitBy duration must be positive");
 
