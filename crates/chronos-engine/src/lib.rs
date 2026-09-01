@@ -1103,7 +1103,7 @@ fn match_calendar_filters(date: NaiveDate, start: DateTime<Utc>, rule: &RRule) -
         None => return false,
     };
 
-    let base_ok = match rule.freq {
+    match rule.freq {
         Freq::Secondly => (candidate - start).num_seconds() >= 0,
         Freq::Minutely => (candidate - start).num_minutes() >= 0,
         Freq::Hourly => (candidate - start).num_hours() >= 0,
@@ -1111,9 +1111,7 @@ fn match_calendar_filters(date: NaiveDate, start: DateTime<Utc>, rule: &RRule) -
         Freq::Weekly => weeks_between_custom(start.date_naive(), date, rule.wkst) >= 0,
         Freq::Monthly => months_between_dates(start.date_naive(), date) >= 0,
         Freq::Yearly => (date.year() - start.year()) >= 0,
-    };
-
-    base_ok
+    }
 }
 
 fn apply_bysetpos(mut candidates: Vec<DateTime<Utc>>, bysetpos: &[i32]) -> Vec<DateTime<Utc>> {
