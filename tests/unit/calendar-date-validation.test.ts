@@ -7,7 +7,7 @@
  * fact stored in a database.
  */
 import { describe, expect, it } from "vitest";
-import { DateTime, Interval } from "../../src/index.js";
+import { DateTime, Interval, overlapsRange } from "../../src/index.js";
 
 describe("chronos > a date that does not exist is refused, not slid forward", () => {
 	// `new Date('2026-02-30')` answers March 2nd. Overflow is right for
@@ -90,5 +90,45 @@ describe("chronos > Interval units are named, not guessed", () => {
 
 	it("splits on a real unit", () => {
 		expect(june.splitBy({ amount: 1, unit: "week" })).toHaveLength(5);
+	});
+});
+
+describe("chronos > two ranges that only touch", () => {
+	const first = { start: "2026-01-01", end: "2026-01-10" };
+	const second = { start: "2026-01-10", end: "2026-01-20" };
+
+	it("overlap when both bounds are closed — the instant is in both", () => {
+		expect(overlapsRange(first, second)).toBe(true);
+	});
+
+	it("do not overlap when the end is open", () => {
+		// The shared instant is the second range's start and the first's end.
+		// With the end open it belongs to the second alone, so there is no
+		// instant in both — `||` called these overlapping anyway.
+		expect(overlapsRange(first, second, { inclusiveEnd: false })).toBe(false);
+	});
+
+	it("do not overlap when the start is open", () => {
+		expect(overlapsRange(first, second, { inclusiveStart: false })).toBe(false);
+	});
+
+	it("do not overlap when neither bound is closed", () => {
+		expect(
+			overlapsRange(first, second, {
+				inclusiveStart: false,
+				inclusiveEnd: false,
+			}),
+		).toBe(false);
+	});
+
+	it("still overlap when they genuinely share a span", () => {
+		// The change must not turn a real overlap into a miss.
+		expect(
+			overlapsRange(
+				first,
+				{ start: "2026-01-05", end: "2026-01-15" },
+				{ inclusiveStart: false, inclusiveEnd: false },
+			),
+		).toBe(true);
 	});
 });

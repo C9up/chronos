@@ -307,7 +307,12 @@ function rangesOverlap(
 ): boolean {
 	const na = normalizeRange(a);
 	const nb = normalizeRange(b);
-	const inc = (opt.inclusiveStart ?? true) || (opt.inclusiveEnd ?? true);
+	// Two ranges that merely touch share exactly one instant: the later one's
+	// start and the earlier one's end. It belongs to both only when BOTH bounds
+	// are closed — with `||`, `[a,b)` and `[b,c)` were called overlapping even
+	// though b is in neither the first range nor... it is in the second's start
+	// only. An `&&` is what "the touching point is in both" means.
+	const inc = (opt.inclusiveStart ?? true) && (opt.inclusiveEnd ?? true);
 	return inc
 		? Math.max(na.start, nb.start) <= Math.min(na.end, nb.end)
 		: Math.max(na.start, nb.start) < Math.min(na.end, nb.end);
