@@ -333,6 +333,13 @@ describe("chronos > calendar accessors (36.10)", () => {
 import { Duration } from "../../src/Duration.js";
 import { Interval } from "../../src/Interval.js";
 
+/** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
+function defined<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a defined value");
+	return value;
+}
+
+
 describe("chronos > Duration (36.8)", () => {
 	it("fromObject + accessors", () => {
 		const d = Duration.fromObject({ hours: 2, minutes: 30 });
@@ -480,16 +487,16 @@ describe("chronos > Interval (36.9)", () => {
 		const iv = Interval.fromDateTimes(JAN1, MAR1);
 		const parts = iv.splitAt(FEB1);
 		expect(parts.length).toBe(2);
-		expect(parts[0].end.toISO()).toBe(FEB1);
-		expect(parts[1].start.toISO()).toBe(FEB1);
+		expect(defined(parts[0]).end.toISO()).toBe(FEB1);
+		expect(defined(parts[1]).start.toISO()).toBe(FEB1);
 	});
 
 	it("splitBy 7-day chunks", () => {
 		const iv = Interval.fromDateTimes(JAN1, JAN15);
 		const parts = iv.splitBy({ amount: 7, unit: "day" });
 		expect(parts.length).toBe(2); // 7d + 7d = 14d
-		expect(parts[0].length("days")).toBeCloseTo(7, 0);
-		expect(parts[1].length("days")).toBeCloseTo(7, 0);
+		expect(defined(parts[0]).length("days")).toBeCloseTo(7, 0);
+		expect(defined(parts[1]).length("days")).toBeCloseTo(7, 0);
 	});
 
 	it("engulfs", () => {

@@ -101,7 +101,8 @@ export class Duration {
 		// Week form: P3W
 		const weekMatch = /^P(\d+(?:\.\d+)?)W$/.exec(s);
 		if (weekMatch) {
-			return apply(new Duration({ weeks: Number.parseFloat(weekMatch[1]) }));
+			const [, weeks] = weekMatch;
+			return apply(new Duration({ weeks: Number.parseFloat(weeks ?? "0") }));
 		}
 
 		const match =
@@ -293,8 +294,8 @@ export class Duration {
 			result[unit] = value;
 		}
 		// Any leftover ms goes into the smallest requested unit as a fractional part.
-		if (totalMs !== 0 && sorted.length > 0) {
-			const smallest = sorted[sorted.length - 1];
+		const smallest = sorted.at(-1);
+		if (totalMs !== 0 && smallest !== undefined) {
 			result[smallest] = (result[smallest] ?? 0) + totalMs / MS_PER[smallest];
 		}
 		return new Duration(result);

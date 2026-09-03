@@ -104,7 +104,9 @@ function daysPerMonthOf(year: number): number[] {
 }
 
 function daysInMonthOf(year: number, month: number): number {
-	return daysPerMonthOf(year)[month - 1];
+	// Callers pass a validated 1-12 month, so the lookup lands; the fallback is
+	// where that is stated instead of asserted past.
+	return daysPerMonthOf(year)[month - 1] ?? 31;
 }
 
 /**
@@ -168,7 +170,18 @@ function isCalendarUnit(unit: DateUnit): boolean {
 function formatFromIsoString(iso: string, pattern: string): string {
 	const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/.exec(iso);
 	if (!match) throw new Error(`Cannot parse ISO for format: ${iso}`);
+	// Every group in the pattern is required, so a match carries all six.
 	const [, y, mo, d, h, mi, s] = match;
+	if (
+		y === undefined ||
+		mo === undefined ||
+		d === undefined ||
+		h === undefined ||
+		mi === undefined ||
+		s === undefined
+	) {
+		throw new Error(`Cannot parse ISO for format: ${iso}`);
+	}
 	const tokens: Record<string, string> = {
 		YYYY: y,
 		YY: y.slice(-2),
@@ -223,10 +236,10 @@ function calendarPartsFromIso(iso: string): CalendarParts {
 		isoMatch[7] != null ? Math.round(Number(`0.${isoMatch[7]}`) * 1000) : 0;
 	const isLeapYear = isLeapYearOf(year);
 	const daysPerMonth = daysPerMonthOf(year);
-	const daysInMonth = daysPerMonth[month - 1];
+	const daysInMonth = daysPerMonth[month - 1] ?? 31;
 	const daysInYear = isLeapYear ? 366 : 365;
 	let ordinal = day;
-	for (let m = 0; m < month - 1; m++) ordinal += daysPerMonth[m];
+	for (const days of daysPerMonth.slice(0, month - 1)) ordinal += days;
 	const localDate = new Date(Date.UTC(year, month - 1, day));
 	const weekday = localDate.getUTCDay() || 7;
 	const jan4 = new Date(Date.UTC(year, 0, 4));
