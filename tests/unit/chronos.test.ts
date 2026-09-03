@@ -339,7 +339,6 @@ function defined<T>(value: T | null | undefined): T {
 	return value;
 }
 
-
 describe("chronos > Duration (36.8)", () => {
 	it("fromObject + accessors", () => {
 		const d = Duration.fromObject({ hours: 2, minutes: 30 });
