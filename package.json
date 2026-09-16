@@ -1,6 +1,6 @@
 {
   "name": "@c9up/chronos",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Chronos — advanced date/time and recurrence engine (TypeScript + Rust N-API)",
   "license": "MIT",
   "type": "module",
@@ -33,7 +33,7 @@
     "test": "vitest run",
     "test:rust": "cargo test",
     "test:napi": "node scripts/verify-napi.mjs",
-    "build:wasm": "wasm-pack build --target web crates/chronos-engine-wasm --out-dir ../../wasm",
+    "build:wasm": "wasm-pack build --target web crates/chronos-engine-wasm --out-dir ../../wasm && node scripts/clean-wasm-pack-meta.mjs",
     "lint": "biome check src/ tests/",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
