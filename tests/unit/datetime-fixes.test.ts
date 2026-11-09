@@ -274,3 +274,23 @@ describe("DST gaps and overlaps resolve as Luxon does", () => {
 		expect(dt.plus(1, "day").toZonedISO()).toBe("2011-12-31T12:00:00+14:00");
 	});
 });
+
+describe("diff counts calendar days and weeks in the value's zone", () => {
+	it("is 1 from 12:00 to 12:00 the next day across both 2026 transitions", () => {
+		const spring = new DateTime("2026-03-28T11:00:00Z", "Europe/Paris");
+		expect(spring.plus(1, "day").diff(spring, "day")).toBe(1);
+		const autumn = new DateTime("2026-10-24T10:00:00Z", "Europe/Paris");
+		expect(autumn.plus(1, "day").diff(autumn, "day")).toBe(1);
+		expect(autumn.diff(autumn.plus(1, "day"), "day")).toBe(-1);
+	});
+
+	it("gives back n for plus(n, 'day') and plus(n, 'week')", () => {
+		const a = new DateTime("2026-01-15T11:00:00Z", "Europe/Paris");
+		for (let n = 1; n <= 400; n++) {
+			expect(a.plus(n, "day").diff(a, "day")).toBe(n);
+		}
+		for (let n = 1; n <= 60; n++) {
+			expect(a.plus(n, "week").diff(a, "week")).toBe(n);
+		}
+	});
+});

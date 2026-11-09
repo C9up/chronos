@@ -642,7 +642,9 @@ export class DateTime {
 	diff(other: DateInput, unit: DateUnit): number {
 		const n = nativeChronos();
 		const otherIso = toIso(other);
-		return this.#zone !== "UTC" && (unit === "month" || unit === "year")
+		// Calendar units count on the value's calendar: across a DST change a
+		// day is still one day, as plus(1, "day") made it.
+		return this.#zone !== "UTC" && isCalendarUnit(unit)
 			? n.diffInZone(this.#iso, otherIso, unit, this.#zone)
 			: n.diff(this.#iso, otherIso, unit);
 	}
