@@ -592,6 +592,27 @@ describe("chronos > timezone support (36.11)", () => {
 		expect(() => new DateTime().setZone("Not/A/Zone")).toThrow(/Unknown/);
 	});
 
+	it("every entry that takes a zone refuses an unknown one, as setZone does", () => {
+		const message = /Unknown IANA timezone: 'Mars\/Olympus'/;
+		expect(() => DateTime.now("Mars/Olympus")).toThrow(message);
+		expect(() => new DateTime("2026-01-15T00:00:00Z", "Mars/Olympus")).toThrow(
+			message,
+		);
+		expect(() => DateTime.now().setZone("Mars/Olympus")).toThrow(message);
+	});
+
+	it("an unknown zone is refused every time, not only the first", () => {
+		expect(() => DateTime.now("Mars/Olympus")).toThrow(/Unknown/);
+		expect(() => DateTime.now("Mars/Olympus")).toThrow(/Unknown/);
+	});
+
+	it("a known zone passes the constructor and survives arithmetic", () => {
+		const dt = new DateTime("2026-01-15T00:00:00Z", "Europe/Paris");
+		expect(dt.zoneName).toBe("Europe/Paris");
+		expect(dt.plus(1, "day").zoneName).toBe("Europe/Paris");
+		expect(dt.plus(1, "day").offset).toBe(60);
+	});
+
 	it("Pacific/Chatham 45-minute offset", () => {
 		const dt = new DateTime("2026-01-15T00:00:00Z").setZone("Pacific/Chatham");
 		expect(dt.offset).toBe(825); // 13h45 = 825 min (CHADT)

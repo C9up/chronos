@@ -48,6 +48,14 @@ DateTime.from('2026-02-30')
 // Invalid date '2026-02-30': February 2026 has 28 days, so there is no day 30.
 ```
 
+So is a zone the tz database does not know — at every entry that takes one,
+`DateTime.now(zone)`, `new DateTime(input, zone)` and `setZone(zone)` alike:
+
+```ts
+DateTime.now('Mars/Olympus')
+// Unknown IANA timezone: 'Mars/Olympus'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+```
+
 `new Date('2026-02-30')` answers March 2nd. Those overflow semantics are right
 for arithmetic and wrong for reading input, where the same slide turns a typo
 into a fact. Only the *written* date is checked, so an offset that legitimately

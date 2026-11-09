@@ -331,13 +331,42 @@ function rangesOverlap(
 		: Math.max(na.start, nb.start) < Math.min(na.end, nb.end);
 }
 
+// ─── Zone validation ─────────────────────────────────────────
+
+/**
+ * Zones the engine has already accepted, exactly as it names them.
+ *
+ * Every derived value (`plus`, `startOf`, …) is built through the constructor
+ * with the zone of the value it came from, so without this each one would pay
+ * a native call to re-validate a zone that was checked on the way in. Only a
+ * name equal to the engine's canonical spelling is remembered: the set is then
+ * bounded by the tz database, whatever spellings a caller sends.
+ */
+const acceptedZones = new Set<string>(["UTC"]);
+
+/**
+ * Throw on a zone the tz database does not know — the one check behind every
+ * entry that takes a zone (`new DateTime(input, zone)`, `DateTime.now(zone)`,
+ * `setZone`), so all three refuse the same names with the same message.
+ */
+function assertZone(zone: string): void {
+	if (acceptedZones.has(zone)) return;
+	const canonical = nativeChronos().validateTimezone(zone);
+	if (canonical === zone) acceptedZones.add(zone);
+}
+
 // ─── DateTime class ──────────────────────────────────────────
 
 export class DateTime {
 	#iso: string;
 	#zone: string;
 
+	/**
+	 * @throws on a zone the tz database does not know. An unknown zone used to
+	 * be stored as given and break later, on the first offset or format.
+	 */
 	constructor(input: string | Date = new Date(), zone = "UTC") {
+		assertZone(zone);
 		this.#iso = toIso(input);
 		this.#zone = zone;
 	}
@@ -411,7 +440,6 @@ export class DateTime {
 	}
 
 	setZone(zone: string): DateTime {
-		nativeChronos().validateTimezone(zone);
 		return new DateTime(this.#iso, zone);
 	}
 	toUTC(): DateTime {
