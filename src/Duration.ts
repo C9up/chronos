@@ -276,6 +276,15 @@ export class Duration {
 		return normalizeObject(other);
 	}
 
+	/** A Duration with `fn` applied to every unit's value (Luxon's `mapUnits`). */
+	mapUnits(fn: (value: number, unit: DurationUnit) => number): Duration {
+		const out: DurationObject = {};
+		for (const unit of ORDERED_UNITS) {
+			out[unit] = asNumber(fn(this.#values[unit], unit));
+		}
+		return new Duration(out);
+	}
+
 	/** Flip the sign on every unit. */
 	negate(): Duration {
 		return new Duration({

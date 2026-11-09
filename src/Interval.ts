@@ -8,7 +8,11 @@
  * @implements Story 36.9
  */
 import { type DateInput, DateTime, type DateUnit } from "./DateTime.js";
-import { Duration, type DurationUnit } from "./Duration.js";
+import {
+	Duration,
+	type DurationObject,
+	type DurationUnit,
+} from "./Duration.js";
 
 /**
  * Milliseconds in one unit, refusing a unit it does not know.
@@ -46,6 +50,17 @@ function msPerUnit(unit: string, caller: string): number {
 	return ms;
 }
 
+/** The `{ amount, unit }` shorthand as a Duration; anything else as given. */
+function toDuration(
+	duration: Duration | DurationObject | { amount: number; unit: DateUnit },
+): Duration {
+	if (duration instanceof Duration) return duration;
+	if ("amount" in duration && "unit" in duration) {
+		return Duration.fromObject({ [`${duration.unit}s`]: duration.amount });
+	}
+	return Duration.fromObject(duration);
+}
+
 export class Interval {
 	readonly #start: DateTime;
 	readonly #end: DateTime;
@@ -71,22 +86,17 @@ export class Interval {
 		return new Interval(DateTime.from(start), DateTime.from(end));
 	}
 
-	/** Build from a start + duration forward. */
+	/**
+	 * Build from a start and a duration forward, as Luxon does: the end is
+	 * `start.plus(duration)`, calendar arithmetic in the start's zone — so
+	 * January 31st plus one month ends on February 28th, not March 2nd.
+	 */
 	static after(
 		start: DateInput,
-		duration: Duration | { amount: number; unit: DateUnit },
+		duration: Duration | DurationObject | { amount: number; unit: DateUnit },
 	): Interval {
 		const s = DateTime.from(start);
-		// For Duration objects, convert to total milliseconds and add as ms —
-		// NOT as seconds (which was the original bug: Duration.fromMillis(1500)
-		// was being treated as 1500 seconds instead of 1.5 seconds).
-		const e =
-			"amount" in duration
-				? s.plus(duration.amount, duration.unit)
-				: DateTime.fromMillis(
-						s.toMillis() + Math.round(duration.as("milliseconds")),
-					);
-		return new Interval(s, e);
+		return new Interval(s, s.plus(toDuration(duration)));
 	}
 
 	// ─── Accessors ──────────────────────────────────────────
@@ -162,55 +172,70 @@ export class Interval {
 
 	/** The overlapping sub-interval, or `null` if disjoint. */
 	intersection(other: Interval): Interval | null {
-		const s = Math.max(this.#start.toMillis(), other.#start.toMillis());
-		const e = Math.min(this.#end.toMillis(), other.#end.toMillis());
-		if (s >= e) return null;
-		return Interval.fromDateTimes(
-			DateTime.fromMillis(s),
-			DateTime.fromMillis(e),
+		const s = this.#start.isBefore(other.#start) ? other.#start : this.#start;
+		const e = this.#end.isAfter(other.#end) ? other.#end : this.#end;
+		if (!s.isBefore(e)) return null;
+		return new Interval(s, e);
+	}
+
+	/**
+	 * The interval from the earlier start to the later end, gap included, as
+	 * Luxon's `union`. Use {@link Interval.merge} to keep disjoint pieces apart.
+	 */
+	union(other: Interval): Interval {
+		return new Interval(
+			other.#start.isBefore(this.#start) ? other.#start : this.#start,
+			other.#end.isAfter(this.#end) ? other.#end : this.#end,
 		);
 	}
 
-	/** The smallest interval that covers both, or `null` if they don't overlap or abut. */
-	union(other: Interval): Interval | null {
-		if (
-			!this.overlaps(other) &&
-			!this.abutsStart(other) &&
-			!this.abutsEnd(other)
-		) {
-			return null;
-		}
-		return Interval.fromDateTimes(
-			DateTime.fromMillis(
-				Math.min(this.#start.toMillis(), other.#start.toMillis()),
-			),
-			DateTime.fromMillis(
-				Math.max(this.#end.toMillis(), other.#end.toMillis()),
-			),
+	/**
+	 * The minimal set of intervals covering the same time: overlapping and
+	 * abutting intervals are joined, disjoint ones kept, in ascending order.
+	 */
+	static merge(intervals: readonly Interval[]): Interval[] {
+		const sorted = [...intervals].sort(
+			(a, b) => a.#start.toMillis() - b.#start.toMillis(),
 		);
+		const out: Interval[] = [];
+		let current: Interval | undefined;
+		for (const item of sorted) {
+			if (current === undefined) {
+				current = item;
+			} else if (current.overlaps(item) || current.abutsStart(item)) {
+				current = current.union(item);
+			} else {
+				out.push(current);
+				current = item;
+			}
+		}
+		if (current !== undefined) out.push(current);
+		return out;
 	}
 
 	// ─── Split ──────────────────────────────────────────────
 
-	/** Split this interval into N sub-intervals of roughly equal `duration` length. */
-	splitBy(duration: Duration | { amount: number; unit: DateUnit }): Interval[] {
-		const stepMs =
-			"amount" in duration
-				? duration.amount * msPerUnit(duration.unit, "Interval.splitBy")
-				: duration.as("milliseconds");
-		if (stepMs <= 0) throw new Error("splitBy duration must be positive");
-
+	/**
+	 * Split into consecutive pieces of `duration`, the last one shorter if it
+	 * does not divide evenly. Each boundary is `start.plus(duration × n)`, as in
+	 * Luxon, so months split on month boundaries and days on the zone's days.
+	 */
+	splitBy(
+		duration: Duration | DurationObject | { amount: number; unit: DateUnit },
+	): Interval[] {
+		if ("unit" in duration && !(duration instanceof Duration)) {
+			msPerUnit(duration.unit, "Interval.splitBy");
+		}
+		const step = toDuration(duration);
+		if (step.as("milliseconds") <= 0) {
+			throw new Error("splitBy duration must be positive");
+		}
 		const result: Interval[] = [];
-		let cursor = this.#start.toMillis();
-		const endMs = this.#end.toMillis();
-		while (cursor < endMs) {
-			const next = Math.min(cursor + stepMs, endMs);
-			result.push(
-				Interval.fromDateTimes(
-					DateTime.fromMillis(cursor),
-					DateTime.fromMillis(next),
-				),
-			);
+		let cursor = this.#start;
+		for (let n = 1; cursor.isBefore(this.#end); n++) {
+			const added = this.#start.plus(step.mapUnits((value) => value * n));
+			const next = added.isAfter(this.#end) ? this.#end : added;
+			result.push(new Interval(cursor, next));
 			cursor = next;
 		}
 		return result;

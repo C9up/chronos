@@ -469,10 +469,14 @@ describe("chronos > Interval (36.9)", () => {
 		expect(u?.end.toISO()).toBe(MAR1);
 	});
 
-	it("union returns null for disjoint", () => {
+	it("union covers the gap between disjoint intervals, as Luxon's does", () => {
 		const a = Interval.fromDateTimes(JAN1, JAN15);
 		const b = Interval.fromDateTimes(FEB1, MAR1);
-		expect(a.union(b)).toBeNull();
+		expect(a.union(b).toJSON()).toEqual({ start: JAN1, end: MAR1 });
+		expect(Interval.merge([b, a]).map((i) => i.toJSON())).toEqual([
+			{ start: JAN1, end: JAN15 },
+			{ start: FEB1, end: MAR1 },
+		]);
 	});
 
 	it("abutsStart / abutsEnd", () => {

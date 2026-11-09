@@ -10,6 +10,7 @@
  *
  * @implements Epic 36 — Chronos
  */
+import { Duration, type DurationObject } from "./Duration.js";
 import { nativeChronos } from "./native.js";
 import { normalizeIso } from "./utils.js";
 
@@ -608,7 +609,55 @@ export class DateTime {
 	 * which the native boundary would otherwise read as 0, and on a result
 	 * outside years 0000-9999.
 	 */
-	plus(amount: number, unit: DateUnit): DateTime {
+	plus(amount: number, unit: DateUnit): DateTime;
+	/**
+	 * Move by a duration, as Luxon's `plus(duration)`: whole years and months
+	 * first (one step, so Feb 29 + 1 year 1 month is Mar 29), then whole weeks
+	 * and days, both on the zone's calendar, then fractions and clock units as
+	 * elapsed time.
+	 */
+	plus(duration: Duration | DurationObject): DateTime;
+	plus(
+		amountOrDuration: number | Duration | DurationObject,
+		unit?: DateUnit,
+	): DateTime {
+		if (typeof amountOrDuration === "object" && amountOrDuration !== null) {
+			return this.#plusDuration(
+				amountOrDuration instanceof Duration
+					? amountOrDuration
+					: Duration.fromObject(amountOrDuration),
+			);
+		}
+		if (unit === undefined) {
+			throw new TypeError("plus(amount, unit) needs a unit");
+		}
+		return this.#plusUnit(amountOrDuration, unit);
+	}
+
+	#plusDuration(duration: Duration): DateTime {
+		const v = duration.toObject();
+		const months = Math.trunc(v.years) * 12 + Math.trunc(v.months);
+		const days = Math.trunc(v.weeks) * 7 + Math.trunc(v.days);
+		const elapsed = Duration.fromObject({
+			years: v.years - Math.trunc(v.years),
+			months: v.months - Math.trunc(v.months),
+			weeks: v.weeks - Math.trunc(v.weeks),
+			days: v.days - Math.trunc(v.days),
+			hours: v.hours,
+			minutes: v.minutes,
+			seconds: v.seconds,
+			milliseconds: v.milliseconds,
+		}).as("milliseconds");
+		let out: DateTime = this.#plusUnit(months, "month");
+		if (days !== 0) out = out.#plusUnit(days, "day");
+		if (elapsed === 0) return out;
+		return new DateTime(
+			new Date(out.toMillis() + Math.round(elapsed)),
+			this.#zone,
+		);
+	}
+
+	#plusUnit(amount: number, unit: DateUnit): DateTime {
 		if (typeof amount !== "number" || !Number.isFinite(amount)) {
 			throw new RangeError(
 				`Invalid unit value ${String(amount)}: plus/minus take a finite number`,
@@ -635,8 +684,30 @@ export class DateTime {
 			this.#zone,
 		);
 	}
-	minus(amount: number, unit: DateUnit): DateTime {
-		return this.plus(-amount, unit);
+	minus(amount: number, unit: DateUnit): DateTime;
+	/** Move back by a duration — `plus` of its negation, as in Luxon. */
+	minus(duration: Duration | DurationObject): DateTime;
+	minus(
+		amountOrDuration: number | Duration | DurationObject,
+		unit?: DateUnit,
+	): DateTime {
+		if (typeof amountOrDuration === "object" && amountOrDuration !== null) {
+			const duration =
+				amountOrDuration instanceof Duration
+					? amountOrDuration
+					: Duration.fromObject(amountOrDuration);
+			return this.#plusDuration(duration.negate());
+		}
+		if (unit === undefined) {
+			throw new TypeError("minus(amount, unit) needs a unit");
+		}
+		// Checked before negating: `-"1"` would turn a string into a number.
+		if (typeof amountOrDuration !== "number") {
+			throw new RangeError(
+				`Invalid unit value ${String(amountOrDuration)}: plus/minus take a finite number`,
+			);
+		}
+		return this.#plusUnit(-amountOrDuration, unit);
 	}
 
 	diff(other: DateInput, unit: DateUnit): number {
