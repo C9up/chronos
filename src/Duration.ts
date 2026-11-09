@@ -33,12 +33,11 @@ const ORDERED_UNITS: DurationUnit[] = [
 	"milliseconds",
 ];
 
-/** Millisecond equivalents for clock units. Calendar units (years/months) are
- *  not convertible to a fixed ms count — they depend on the anchor date. When
- *  converting, we use an approximation (30-day month, 365-day year) and
- *  document it. Luxon does the same. */
+/** Millisecond equivalents. Calendar units (years/months) have no fixed length
+ *  — they depend on the anchor date — so conversions use Luxon's casual matrix:
+ *  a 30-day month and a 365-day year. */
 const MS_PER: Record<DurationUnit, number> = {
-	years: 365.25 * 24 * 60 * 60 * 1000,
+	years: 365 * 24 * 60 * 60 * 1000,
 	months: 30 * 24 * 60 * 60 * 1000,
 	weeks: 7 * 24 * 60 * 60 * 1000,
 	days: 24 * 60 * 60 * 1000,
@@ -47,6 +46,75 @@ const MS_PER: Record<DurationUnit, number> = {
 	seconds: 1000,
 	milliseconds: 1,
 };
+
+const UNIT_NAMES: Readonly<Record<string, DurationUnit>> = {
+	year: "years",
+	years: "years",
+	month: "months",
+	months: "months",
+	week: "weeks",
+	weeks: "weeks",
+	day: "days",
+	days: "days",
+	hour: "hours",
+	hours: "hours",
+	minute: "minutes",
+	minutes: "minutes",
+	second: "seconds",
+	seconds: "seconds",
+	millisecond: "milliseconds",
+	milliseconds: "milliseconds",
+};
+
+/** A unit name, singular or plural, any case (Luxon's `normalizeUnit`). */
+function normalizeUnit(unit: string): DurationUnit {
+	const key = typeof unit === "string" ? unit.toLowerCase() : "";
+	const normalized = Object.hasOwn(UNIT_NAMES, key)
+		? UNIT_NAMES[key]
+		: undefined;
+	if (normalized === undefined) {
+		throw new RangeError(`Invalid duration unit: ${String(unit)}`);
+	}
+	return normalized;
+}
+
+/**
+ * A unit value as Luxon's `asNumber` reads it: a numeric string is coerced, and
+ * anything that is not a finite number (NaN, ±Infinity, a boolean, "") is
+ * refused rather than stored — stored, NaN printed as `PT0S` and a string
+ * concatenated in `plus`.
+ */
+function asNumber(value: unknown): number {
+	const numeric = Number(value);
+	if (typeof value === "boolean" || value === "" || !Number.isFinite(numeric)) {
+		throw new RangeError(`Invalid unit value ${String(value)}`);
+	}
+	return numeric;
+}
+
+/** Validate a duration-like object into canonical unit names. */
+function normalizeObject(obj: unknown): DurationObject {
+	if (typeof obj !== "object" || obj === null) {
+		throw new TypeError(
+			`Invalid duration: expected an object of units, got ${typeof obj}`,
+		);
+	}
+	const out: DurationObject = {};
+	for (const [key, value] of Object.entries(obj)) {
+		if (value === undefined || value === null) continue;
+		const unit = normalizeUnit(key);
+		out[unit] = (out[unit] ?? 0) + asNumber(value);
+	}
+	return out;
+}
+
+/**
+ * ISO 8601 durations as Luxon reads them: a sign on the whole and on each
+ * component, a fraction on any of them, weeks mixable with the rest, and at
+ * most 20 digits per number so a value cannot overflow to Infinity.
+ */
+const ISO_DURATION =
+	/^-?P(?:(?:(-?\d{1,20}(?:\.\d{1,20})?)Y)?(?:(-?\d{1,20}(?:\.\d{1,20})?)M)?(?:(-?\d{1,20}(?:\.\d{1,20})?)W)?(?:(-?\d{1,20}(?:\.\d{1,20})?)D)?(?:T(?:(-?\d{1,20}(?:\.\d{1,20})?)H)?(?:(-?\d{1,20}(?:\.\d{1,20})?)M)?(?:(-?\d{1,20})(?:[.,](-?\d{1,20}))?S)?)?)$/;
 
 export class Duration {
 	readonly #values: Readonly<Required<DurationObject>>;
@@ -72,66 +140,65 @@ export class Duration {
 
 	// ─── Factories ──────────────────────────────────────────
 
-	/** Build from a plain object of unit values. */
+	/**
+	 * Build from a plain object of unit values. Unit names may be singular or
+	 * plural; every value must be a finite number (a numeric string is coerced).
+	 *
+	 * @throws RangeError on an unknown unit or a non-finite value.
+	 */
 	static fromObject(obj: DurationObject): Duration {
-		return new Duration(obj);
+		return new Duration(normalizeObject(obj));
 	}
 
 	/** Build from a total number of milliseconds (approximates calendar units). */
 	static fromMillis(ms: number): Duration {
-		return new Duration({ milliseconds: ms });
+		return new Duration({ milliseconds: asNumber(ms) });
 	}
 
 	/**
-	 * Parse an ISO 8601 duration string (`P1Y2M3DT4H5M6.789S`).
-	 *
-	 * Supports the full `PnYnMnDTnHnMnS` form. Fractional seconds are
-	 * rounded to the nearest millisecond. Weeks (`PnW`) are a separate form
-	 * that cannot be mixed with other designators per the spec.
+	 * Parse an ISO 8601 duration string (`P1Y2M3DT4H5M6.789S`, `P2W`, `P1.5D`,
+	 * `PT-5M`, `-P1D`), with Luxon's grammar.
 	 */
 	static fromISO(iso: string): Duration {
-		const trimmed = iso.trim();
-		// A leading '-' marks a negative duration (the extension toISO emits).
-		const negative = trimmed.startsWith("-P");
-		const s = negative ? trimmed.slice(1) : trimmed;
-		if (!s.startsWith("P"))
-			throw new Error(`Invalid ISO 8601 duration: ${iso}`);
-		const apply = (d: Duration): Duration => (negative ? d.negate() : d);
-
-		// Week form: P3W
-		const weekMatch = /^P(\d+(?:\.\d+)?)W$/.exec(s);
-		if (weekMatch) {
-			const [, weeks] = weekMatch;
-			return apply(new Duration({ weeks: Number.parseFloat(weeks ?? "0") }));
+		const m = typeof iso === "string" ? ISO_DURATION.exec(iso) : null;
+		// The all-optional grammar also matches a bare "P"/"PT": a duration
+		// needs at least one component. An explicit zero ("PT0S") still parses.
+		if (!m || m.slice(1).every((part) => part === undefined)) {
+			throw new RangeError(`Invalid ISO 8601 duration: ${String(iso)}`);
 		}
-
-		const match =
-			/^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?$/.exec(
-				s,
-			);
-		if (!match) throw new Error(`Invalid ISO 8601 duration: ${iso}`);
-
-		const [, y, mo, d, h, mi, sec] = match;
-		// The all-optional regex also matches bare "P"/"PT" — a duration needs at
-		// least one component. An explicit zero ("PT0S", "P0D") still parses.
-		if (!y && !mo && !d && !h && !mi && !sec) {
-			throw new Error(`Invalid ISO 8601 duration: ${iso}`);
+		const [, y, mo, w, d, h, mi, sec, frac] = m;
+		// ISO 8601 requires a time component after "T"; Luxon lets "P1DT" through.
+		if (
+			iso.includes("T") &&
+			h === undefined &&
+			mi === undefined &&
+			sec === undefined
+		) {
+			throw new RangeError(`Invalid ISO 8601 duration: ${iso}`);
 		}
-		const seconds = sec ? Math.floor(Number.parseFloat(sec)) : 0;
-		const milliseconds = sec
-			? Math.round((Number.parseFloat(sec) - seconds) * 1000)
-			: 0;
-		return apply(
-			new Duration({
-				years: y ? Number(y) : 0,
-				months: mo ? Number(mo) : 0,
-				days: d ? Number(d) : 0,
-				hours: h ? Number(h) : 0,
-				minutes: mi ? Number(mi) : 0,
-				seconds,
-				milliseconds,
-			}),
-		);
+		const negativePrefix = iso.startsWith("-");
+		const read = (part: string | undefined): number | undefined => {
+			if (part === undefined) return undefined;
+			const value = Number.parseFloat(part);
+			return negativePrefix && value !== 0 ? -value : value;
+		};
+		let milliseconds: number | undefined;
+		if (frac !== undefined) {
+			const ms = Math.floor(Number.parseFloat(`0.${frac}`) * 1000);
+			const negativeSeconds = sec?.startsWith("-") === true;
+			milliseconds = negativeSeconds !== negativePrefix ? -ms : ms;
+		}
+		const values: DurationObject = {
+			years: read(y),
+			months: read(mo),
+			weeks: read(w),
+			days: read(d),
+			hours: read(h),
+			minutes: read(mi),
+			seconds: sec === "-0" && !negativePrefix ? -0 : read(sec),
+			milliseconds,
+		};
+		return new Duration(normalizeObject(values));
 	}
 
 	// ─── Accessors ──────────────────────────────────────────
@@ -161,9 +228,9 @@ export class Duration {
 		return this.#values.milliseconds;
 	}
 
-	/** Get a specific unit. */
+	/** Get a specific unit (singular or plural name). */
 	get(unit: DurationUnit): number {
-		return this.#values[unit];
+		return this.#values[normalizeUnit(unit)];
 	}
 
 	/** Return the internal bag as a plain object. */
@@ -173,9 +240,9 @@ export class Duration {
 
 	// ─── Arithmetic ─────────────────────────────────────────
 
-	/** Add another duration to this one (per-unit addition). */
-	plus(other: Duration | DurationObject): Duration {
-		const o = other instanceof Duration ? other.#values : other;
+	/** Add another duration (a Duration, an object of units, or milliseconds). */
+	plus(other: Duration | DurationObject | number): Duration {
+		const o = Duration.#valuesOf(other);
 		return new Duration({
 			years: this.#values.years + (o.years ?? 0),
 			months: this.#values.months + (o.months ?? 0),
@@ -189,8 +256,8 @@ export class Duration {
 	}
 
 	/** Subtract another duration from this one. */
-	minus(other: Duration | DurationObject): Duration {
-		const o = other instanceof Duration ? other.#values : other;
+	minus(other: Duration | DurationObject | number): Duration {
+		const o = Duration.#valuesOf(other);
 		return new Duration({
 			years: this.#values.years - (o.years ?? 0),
 			months: this.#values.months - (o.months ?? 0),
@@ -201,6 +268,12 @@ export class Duration {
 			seconds: this.#values.seconds - (o.seconds ?? 0),
 			milliseconds: this.#values.milliseconds - (o.milliseconds ?? 0),
 		});
+	}
+
+	static #valuesOf(other: Duration | DurationObject | number): DurationObject {
+		if (other instanceof Duration) return other.#values;
+		if (typeof other === "number") return { milliseconds: asNumber(other) };
+		return normalizeObject(other);
 	}
 
 	/** Flip the sign on every unit. */
@@ -220,50 +293,41 @@ export class Duration {
 	// ─── Conversion ─────────────────────────────────────────
 
 	/**
-	 * Normalize clock units — cascade overflows upward so that e.g. 90 seconds
-	 * becomes 1 minute 30 seconds. Calendar units (years, months) are left
-	 * untouched because normalizing months→years requires knowing *which* year.
-	 *
-	 * Weeks are not cascaded into months — they stay as weeks unless the source
-	 * explicitly had weeks. This matches Luxon's behavior.
+	 * Normalize days and the clock units with Luxon's `normalizeValues`: carry
+	 * overflows upward (90 seconds becomes 1 minute 30 seconds), rebalance mixed
+	 * signs against the sign of the whole (`{ hours: -1, minutes: 30 }` is
+	 * thirty minutes back, `{ minutes: -30 }`), and push fractions down into
+	 * the next unit. Years, months and weeks are left as they are: rolling days
+	 * into them would need an anchor date.
 	 */
 	normalize(): Duration {
-		let ms = this.#values.milliseconds;
-		let sec = this.#values.seconds;
-		let min = this.#values.minutes;
-		let hrs = this.#values.hours;
-		let days = this.#values.days;
-
-		// Use a carry function that handles negative values correctly.
-		// JS `%` is remainder (preserves sign), not modulo. For negative
-		// durations we need true modulo so the remainder is always non-negative
-		// relative to its parent unit, matching the mathematical convention.
-		const carry = (value: number, divisor: number): [number, number] => {
-			const quot = Math.trunc(value / divisor);
-			const rem = value - quot * divisor;
-			return [quot, rem];
-		};
-
-		let c: number;
-		[c, ms] = carry(ms, 1000);
-		sec += c;
-		[c, sec] = carry(sec, 60);
-		min += c;
-		[c, min] = carry(min, 60);
-		hrs += c;
-		[c, hrs] = carry(hrs, 24);
-		days += c;
-
-		return new Duration({
-			years: this.#values.years,
-			months: this.#values.months,
-			weeks: this.#values.weeks,
-			days,
-			hours: hrs,
-			minutes: min,
-			seconds: sec,
-			milliseconds: ms,
-		});
+		const vals = { ...this.#values };
+		const units: DurationUnit[] = [
+			"days",
+			"hours",
+			"minutes",
+			"seconds",
+			"milliseconds",
+		];
+		const factor = this.as("milliseconds") < 0 ? -1 : 1;
+		for (let i = units.length - 1; i > 0; i--) {
+			const current = units[i - 1];
+			const previous = units[i];
+			if (current === undefined || previous === undefined) continue;
+			const conv = MS_PER[current] / MS_PER[previous];
+			const rollUp = Math.floor((vals[previous] * factor) / conv);
+			vals[current] += rollUp * factor;
+			vals[previous] -= rollUp * conv * factor;
+		}
+		for (let i = 1; i < units.length; i++) {
+			const previous = units[i - 1];
+			const current = units[i];
+			if (current === undefined || previous === undefined) continue;
+			const fraction = vals[previous] % 1;
+			vals[previous] -= fraction;
+			vals[current] += (fraction * MS_PER[previous]) / MS_PER[current];
+		}
+		return new Duration(vals);
 	}
 
 	/**
@@ -274,8 +338,9 @@ export class Duration {
 	 *     Duration.fromObject({ hours: 25 }).shiftTo('days', 'hours')
 	 *     // → { days: 1, hours: 1 }
 	 */
-	shiftTo(...units: DurationUnit[]): Duration {
-		if (units.length === 0) return this;
+	shiftTo(...requested: DurationUnit[]): Duration {
+		if (requested.length === 0) return this;
+		const units = requested.map(normalizeUnit);
 
 		// Convert the entire duration to approximate milliseconds, then greedily
 		// distribute into the requested units from largest to smallest.
@@ -310,7 +375,7 @@ export class Duration {
 		for (const u of ORDERED_UNITS) {
 			totalMs += this.#values[u] * MS_PER[u];
 		}
-		return totalMs / MS_PER[unit];
+		return totalMs / MS_PER[normalizeUnit(unit)];
 	}
 
 	// ─── Formatting ─────────────────────────────────────────
