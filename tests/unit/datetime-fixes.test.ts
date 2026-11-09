@@ -225,3 +225,31 @@ describe("fromObject validates every field", () => {
 		expect(dt.zoneName).toBe("Europe/Paris");
 	});
 });
+
+describe("fromSQL reads what databases print", () => {
+	it.each([
+		["2026-08-10 12:00:00+00", "2026-08-10T12:00:00.000Z"],
+		["2026-08-10 12:00:00.123+02:00", "2026-08-10T10:00:00.123Z"],
+		["2026-08-10", "2026-08-10T00:00:00.000Z"],
+		["2026-08-10 12:00:00", "2026-08-10T12:00:00.000Z"],
+	])("%s", (input, expected) => {
+		expect(DateTime.fromSQL(input).toISO()).toBe(expected);
+	});
+
+	it("reads an offset-less value in the zone it is given", () => {
+		const dt = DateTime.fromSQL("2026-08-10 12:00:00", {
+			zone: "Europe/Paris",
+		});
+		expect(dt.toZonedISO()).toBe("2026-08-10T12:00:00+02:00");
+		expect(
+			DateTime.fromSQL("2026-08-10 12:00:00+00", {
+				zone: "Europe/Paris",
+			}).toISO(),
+		).toBe("2026-08-10T12:00:00.000Z");
+	});
+
+	it("still refuses what is not a SQL literal", () => {
+		expect(() => DateTime.fromSQL("2026-08-10 12")).toThrow(/Invalid SQL/);
+		expect(() => DateTime.fromSQL("2026-02-30")).toThrow(/Invalid SQL/);
+	});
+});

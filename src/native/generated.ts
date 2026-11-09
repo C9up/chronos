@@ -76,7 +76,10 @@ export declare function fromLocal(naiveIso: string, zone: string): string;
 
 export declare function parseRfc2822(input: string): string;
 
-export declare function parseSql(input: string): string;
+export declare function parseSql(
+	input: string,
+	zone?: string | undefined | null,
+): string;
 
 export declare function parseHttp(input: string): string;
 

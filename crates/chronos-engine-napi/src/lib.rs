@@ -151,8 +151,8 @@ pub fn parse_rfc2822(input: String) -> Result<String> {
 }
 
 #[napi]
-pub fn parse_sql(input: String) -> Result<String> {
-    wrap_string(|| chronos_engine::parse_sql(&input))
+pub fn parse_sql(input: String, zone: Option<String>) -> Result<String> {
+    wrap_string(|| chronos_engine::parse_sql(&input, zone.as_deref()))
 }
 
 #[napi]

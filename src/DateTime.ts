@@ -556,8 +556,19 @@ export class DateTime {
 	static fromRFC2822(input: string): DateTime {
 		return new DateTime(nativeChronos().parseRfc2822(input));
 	}
-	static fromSQL(input: string): DateTime {
-		return new DateTime(nativeChronos().parseSql(input));
+	/**
+	 * Read a SQL literal: `YYYY-MM-DD`, or `YYYY-MM-DD HH:mm[:ss[.fff]]` with an
+	 * optional offset (`+00`, `+02:00` — PostgreSQL's `timestamptz` text) or
+	 * IANA zone. Without one, the value is a wall clock in `options.zone` (UTC
+	 * by default), and the result is in that zone.
+	 */
+	static fromSQL(input: string, options: { zone?: string } = {}): DateTime {
+		const zone = options.zone ?? "UTC";
+		assertZone(zone);
+		return new DateTime(
+			nativeChronos().parseSql(input, zone === "UTC" ? undefined : zone),
+			zone,
+		);
 	}
 	static fromHTTP(input: string): DateTime {
 		return new DateTime(nativeChronos().parseHttp(input));

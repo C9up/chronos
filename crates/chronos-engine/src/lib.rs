@@ -580,15 +580,103 @@ pub fn parse_rfc2822(input: &str) -> Result<String, String> {
         .map_err(|e| format!("Invalid RFC 2822 date: {} ({})", input, e))
 }
 
-/// Parse a SQL datetime literal (`2026-04-08 14:00:00`).
-pub fn parse_sql(input: &str) -> Result<String, String> {
-    NaiveDateTime::parse_from_str(input.trim(), "%Y-%m-%d %H:%M:%S")
-        .map(|nd| to_iso(Utc.from_utc_datetime(&nd)))
-        .or_else(|_| {
-            NaiveDateTime::parse_from_str(input.trim(), "%Y-%m-%d %H:%M:%S%.f")
-                .map(|nd| to_iso(Utc.from_utc_datetime(&nd)))
-        })
-        .map_err(|e| format!("Invalid SQL datetime: {} ({})", input, e))
+/// Read `count` ASCII digits at the start of `s`.
+fn leading_digits(s: &str, count: usize) -> Option<(u32, &str)> {
+    let head = s.get(..count)?;
+    if !head.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((head.parse().ok()?, &s[count..]))
+}
+
+/// Parse a SQL date/time literal the way databases print them: `YYYY-MM-DD`
+/// (a `date` column) or `YYYY-MM-DD HH:MM[:SS[.fffffffff]]`, optionally
+/// followed, with or without a space, by an offset (`Z`, `+HH`, `+HHMM`,
+/// `+HH:MM` — PostgreSQL prints a `timestamptz` as `2026-08-10 12:00:00+00`) or
+/// an IANA zone name. A value with neither is a wall clock in `zone`, UTC when
+/// none is given.
+pub fn parse_sql(input: &str, zone: Option<&str>) -> Result<String, String> {
+    let invalid = || format!("Invalid SQL datetime: {}", input);
+    let s = input.trim();
+    let (year, rest) = leading_digits(s, 4).ok_or_else(invalid)?;
+    let rest = rest.strip_prefix('-').ok_or_else(invalid)?;
+    let (month, rest) = leading_digits(rest, 2).ok_or_else(invalid)?;
+    let rest = rest.strip_prefix('-').ok_or_else(invalid)?;
+    let (day, mut rest) = leading_digits(rest, 2).ok_or_else(invalid)?;
+    let date = NaiveDate::from_ymd_opt(year as i32, month, day).ok_or_else(invalid)?;
+
+    let mut time = chrono::NaiveTime::MIN;
+    if let Some(after) = rest.strip_prefix([' ', 'T']) {
+        let (hour, r) = leading_digits(after, 2).ok_or_else(invalid)?;
+        let r = r.strip_prefix(':').ok_or_else(invalid)?;
+        let (minute, mut r) = leading_digits(r, 2).ok_or_else(invalid)?;
+        let mut second = 0;
+        let mut nanos = 0;
+        if let Some(sec) = r.strip_prefix(':') {
+            let (value, after_sec) = leading_digits(sec, 2).ok_or_else(invalid)?;
+            second = value;
+            r = after_sec;
+            if let Some(fraction) = r.strip_prefix('.') {
+                let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
+                if digits == 0 || digits > 9 {
+                    return Err(invalid());
+                }
+                let value: u32 = fraction[..digits].parse().map_err(|_| invalid())?;
+                nanos = value * 10u32.pow(9 - digits as u32);
+                r = &fraction[digits..];
+            }
+        }
+        time = chrono::NaiveTime::from_hms_nano_opt(hour, minute, second, nanos)
+            .ok_or_else(invalid)?;
+        rest = r;
+    }
+    let wall = date.and_time(time);
+
+    let suffix = rest.strip_prefix(' ').unwrap_or(rest);
+    let instant = if suffix.is_empty() {
+        match zone {
+            None => Utc.from_utc_datetime(&wall),
+            Some(name) => {
+                let tz: Tz = name
+                    .parse()
+                    .map_err(|_| format!("Unknown timezone: {}", name))?;
+                return resolve_local(in_range(wall)?, tz);
+            }
+        }
+    } else if suffix.eq_ignore_ascii_case("z") {
+        Utc.from_utc_datetime(&wall)
+    } else if let Some(sign) = suffix.chars().next().filter(|c| *c == '+' || *c == '-') {
+        let (hours, r) = leading_digits(&suffix[1..], 2).ok_or_else(invalid)?;
+        let r = r.strip_prefix(':').unwrap_or(r);
+        let minutes = if r.is_empty() {
+            0
+        } else {
+            let (m, end) = leading_digits(r, 2).ok_or_else(invalid)?;
+            if !end.is_empty() {
+                return Err(invalid());
+            }
+            m
+        };
+        if hours > 23 || minutes > 59 {
+            return Err(invalid());
+        }
+        let seconds = i32::try_from(hours * 3600 + minutes * 60).map_err(|_| invalid())?;
+        let offset = if sign == '-' {
+            chrono::FixedOffset::west_opt(seconds)
+        } else {
+            chrono::FixedOffset::east_opt(seconds)
+        }
+        .ok_or_else(invalid)?;
+        offset
+            .from_local_datetime(&wall)
+            .single()
+            .ok_or_else(invalid)?
+            .with_timezone(&Utc)
+    } else {
+        let tz: Tz = suffix.parse().map_err(|_| invalid())?;
+        return resolve_local(in_range(wall)?, tz);
+    };
+    Ok(to_iso(in_range(instant)?))
 }
 
 /// Parse an HTTP date (`Mon, 02 Apr 2026 14:00:00 GMT`).
@@ -785,6 +873,48 @@ mod tests {
         // matches `Date.toISOString().replace('.000Z', 'Z')` from the JS side.
         let result = add("2026-04-08T14:00:00.000Z", 1, "second").unwrap();
         assert_eq!(result, "2026-04-08T14:00:01.000Z");
+    }
+
+    #[test]
+    fn parse_sql_reads_what_databases_print() {
+        let cases = [
+            ("2026-08-10 12:00:00+00", "2026-08-10T12:00:00.000Z"),
+            ("2026-08-10 12:00:00.123+02:00", "2026-08-10T10:00:00.123Z"),
+            ("2026-08-10 12:00:00-0530", "2026-08-10T17:30:00.000Z"),
+            ("2026-08-10 12:00:00 +02", "2026-08-10T10:00:00.000Z"),
+            ("2026-08-10 12:00:00Z", "2026-08-10T12:00:00.000Z"),
+            ("2026-08-10 12:00", "2026-08-10T12:00:00.000Z"),
+            ("2026-08-10", "2026-08-10T00:00:00.000Z"),
+            (
+                "2026-08-10 12:00:00 Europe/Paris",
+                "2026-08-10T10:00:00.000Z",
+            ),
+            ("2026-08-10 12:00:00.123456789", "2026-08-10T12:00:00.123Z"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(parse_sql(input, None).unwrap(), expected, "{}", input);
+        }
+        assert_eq!(
+            parse_sql("2026-08-10 12:00:00", Some("Europe/Paris")).unwrap(),
+            "2026-08-10T10:00:00.000Z"
+        );
+        // An explicit offset wins over the zone.
+        assert_eq!(
+            parse_sql("2026-08-10 12:00:00+00", Some("Europe/Paris")).unwrap(),
+            "2026-08-10T12:00:00.000Z"
+        );
+        for bad in [
+            "2026-08-10 12",
+            "2026-8-10",
+            "2026-02-30",
+            "2026-08-10 12:00:00+24",
+            "2026-08-10 12:00:00 Nowhere/X",
+            "2026-08-10 12:00:00.",
+            "2026-08-10 12:00:00+02:00x",
+            "10000-01-01",
+        ] {
+            assert!(parse_sql(bad, None).is_err(), "{}", bad);
+        }
     }
 
     #[test]

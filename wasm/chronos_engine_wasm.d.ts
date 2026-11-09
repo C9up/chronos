@@ -46,7 +46,10 @@ export function diff_in_zone(
 export function zone_offset(iso: string, zone: string): number;
 export function from_local(naive: string, zone: string): string;
 export function parse_rfc2822(input: string): string;
-export function parse_sql(input: string): string;
+export function parse_sql(
+	input: string,
+	zone: string | undefined | null,
+): string;
 export function parse_http(input: string): string;
 export function rrule_expand(
 	start: string | undefined | null,

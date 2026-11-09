@@ -84,8 +84,8 @@ pub fn parse_rfc2822(input: &str) -> Result<String, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn parse_sql(input: &str) -> Result<String, JsValue> {
-    chronos_engine::parse_sql(input).map_err(|e| JsValue::from_str(&e))
+pub fn parse_sql(input: &str, zone: Option<String>) -> Result<String, JsValue> {
+    chronos_engine::parse_sql(input, zone.as_deref()).map_err(|e| JsValue::from_str(&e))
 }
 
 #[wasm_bindgen]

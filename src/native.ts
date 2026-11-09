@@ -76,7 +76,7 @@ if (isNode) {
 			zoneOffset: (iso, zone) => wasm.zone_offset(iso, zone),
 			fromLocal: (naive, zone) => wasm.from_local(naive, zone),
 			parseRfc2822: (input) => wasm.parse_rfc2822(input),
-			parseSql: (input) => wasm.parse_sql(input),
+			parseSql: (input, zone) => wasm.parse_sql(input, zone),
 			parseHttp: (input) => wasm.parse_http(input),
 			rruleExpand: (start, rrule, limit, tzid) =>
 				wasm.rrule_expand(start, rrule, limit, tzid),
