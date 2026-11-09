@@ -146,6 +146,14 @@ export const dateTimeAtlasAdapter = Object.freeze({
 					"Wrap the value with `new DateTime(...)` before assigning to a column tagged with this adapter.",
 			);
 		}
+		// The UTC form whatever the value's zone: `toISO()` writes a zoned value
+		// with its local offset (as Luxon does), and stored text has to sort and
+		// compare as one canonical instant.
+		const toUTC: unknown = Reflect.get(value, "toUTC");
+		if (typeof toUTC === "function") {
+			const utc: unknown = Reflect.apply(toUTC, value, []);
+			if (isDateTimeLike(utc)) return utc.toISO();
+		}
 		return value.toISO();
 	},
 });

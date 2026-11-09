@@ -109,8 +109,8 @@ describe("chronos > DateTime > arithmetic in zones", () => {
 		// This used to assert the magnitude only, with a comment saying the
 		// direction depended on the engine — which is how an inverted sign
 		// stayed unnoticed. The direction is `a - b`, and `a` is a year later.
-		expect(a.diff(b, "year")).toBe(1);
-		expect(b.diff(a, "year")).toBe(-1);
+		expect(a.diff(b, "year").as("year")).toBe(1);
+		expect(b.diff(a, "year").as("year")).toBe(-1);
 	});
 
 	it("minus(n, unit) is the inverse of plus(n, unit) for hours", () => {

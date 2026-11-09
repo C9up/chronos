@@ -19,7 +19,11 @@ export {
 	inRange,
 	overlapsRange,
 } from "./DateTime.js";
-export type { DurationObject, DurationUnit } from "./Duration.js";
+export type {
+	DurationObject,
+	DurationUnit,
+	DurationUnitLike,
+} from "./Duration.js";
 export { Duration } from "./Duration.js";
 export { Interval } from "./Interval.js";
 export type { ExpandRRuleOptions, RRuleBuild } from "./rrule.js";
@@ -58,7 +62,7 @@ export const Chronos = {
 	subtract: (input: string | Date, amount: number, unit: DateUnit): DateTime =>
 		new DateTime(input).minus(amount, unit),
 	diff: (a: string | Date, b: string | Date, unit: DateUnit): number =>
-		new DateTime(a).diff(b, unit),
+		new DateTime(a).diff(b, unit).as(unit),
 	inRange,
 	rangeContains: (
 		outer: DateRange,

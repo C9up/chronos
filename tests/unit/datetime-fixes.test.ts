@@ -116,8 +116,8 @@ describe("strings are read as ISO 8601, the same way on every host", () => {
 				expect(
 					DateTime.fromISO("2026-08-10T12:00:00", {
 						zone: "America/New_York",
-					}).toISO(),
-				).toBe("2026-08-10T16:00:00.000Z");
+					}).toMillis(),
+				).toBe(Date.parse("2026-08-10T16:00:00.000Z"));
 			});
 		},
 	);
@@ -221,7 +221,7 @@ describe("fromObject validates every field", () => {
 			{ year: 2026, month: 8, day: 10, hour: 9, millisecond: 250 },
 			{ zone: "Europe/Paris" },
 		);
-		expect(dt.toISO()).toBe("2026-08-10T07:00:00.250Z");
+		expect(dt.toUTC().toISO()).toBe("2026-08-10T07:00:00.250Z");
 		expect(dt.zoneName).toBe("Europe/Paris");
 	});
 });
@@ -244,7 +244,9 @@ describe("fromSQL reads what databases print", () => {
 		expect(
 			DateTime.fromSQL("2026-08-10 12:00:00+00", {
 				zone: "Europe/Paris",
-			}).toISO(),
+			})
+				.toUTC()
+				.toISO(),
 		).toBe("2026-08-10T12:00:00.000Z");
 	});
 
@@ -278,19 +280,19 @@ describe("DST gaps and overlaps resolve as Luxon does", () => {
 describe("diff counts calendar days and weeks in the value's zone", () => {
 	it("is 1 from 12:00 to 12:00 the next day across both 2026 transitions", () => {
 		const spring = new DateTime("2026-03-28T11:00:00Z", "Europe/Paris");
-		expect(spring.plus(1, "day").diff(spring, "day")).toBe(1);
+		expect(spring.plus(1, "day").diff(spring, "day").as("day")).toBe(1);
 		const autumn = new DateTime("2026-10-24T10:00:00Z", "Europe/Paris");
-		expect(autumn.plus(1, "day").diff(autumn, "day")).toBe(1);
-		expect(autumn.diff(autumn.plus(1, "day"), "day")).toBe(-1);
+		expect(autumn.plus(1, "day").diff(autumn, "day").as("day")).toBe(1);
+		expect(autumn.diff(autumn.plus(1, "day"), "day").as("day")).toBe(-1);
 	});
 
 	it("gives back n for plus(n, 'day') and plus(n, 'week')", () => {
 		const a = new DateTime("2026-01-15T11:00:00Z", "Europe/Paris");
 		for (let n = 1; n <= 400; n++) {
-			expect(a.plus(n, "day").diff(a, "day")).toBe(n);
+			expect(a.plus(n, "day").diff(a, "day").as("day")).toBe(n);
 		}
 		for (let n = 1; n <= 60; n++) {
-			expect(a.plus(n, "week").diff(a, "week")).toBe(n);
+			expect(a.plus(n, "week").diff(a, "week").as("week")).toBe(n);
 		}
 	});
 });

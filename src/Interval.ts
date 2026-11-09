@@ -99,6 +99,40 @@ export class Interval {
 		return new Interval(s, s.plus(toDuration(duration)));
 	}
 
+	/** The interval of `duration` ending at `end` (Luxon's `Interval.before`). */
+	static before(
+		end: DateInput,
+		duration: Duration | DurationObject | { amount: number; unit: DateUnit },
+	): Interval {
+		const e = DateTime.from(end);
+		return new Interval(e.minus(toDuration(duration)), e);
+	}
+
+	/**
+	 * Parse an ISO 8601 interval: `start/end`, `start/duration` or
+	 * `duration/end` (Luxon's `Interval.fromISO`). Offset-less times are read in
+	 * `options.zone` (UTC by default).
+	 *
+	 * @throws RangeError when neither half reads as a date.
+	 */
+	static fromISO(text: string, options: { zone?: string } = {}): Interval {
+		const [s, e] = text.split("/", 2);
+		const read = (part: string | undefined): DateTime | undefined => {
+			if (!part) return undefined;
+			try {
+				return DateTime.fromISO(part, options);
+			} catch {
+				return undefined;
+			}
+		};
+		const start = read(s);
+		const end = read(e);
+		if (start && end) return new Interval(start, end);
+		if (start && e) return Interval.after(start, Duration.fromISO(e));
+		if (end && s) return Interval.before(end, Duration.fromISO(s));
+		throw new RangeError(`Invalid ISO 8601 interval: ${text}`);
+	}
+
 	// ─── Accessors ──────────────────────────────────────────
 
 	get start(): DateTime {
@@ -112,6 +146,20 @@ export class Interval {
 	length(unit: DurationUnit | DateUnit = "milliseconds"): number {
 		const ms = this.#end.toMillis() - this.#start.toMillis();
 		return ms / msPerUnit(unit, "Interval.length");
+	}
+
+	/**
+	 * How many `unit`s the interval touches, counting partial ones — a day
+	 * starting at noon and ending the next noon touches two days (Luxon's
+	 * `count`).
+	 */
+	count(unit: DateUnit): number {
+		const start = this.#start.startOf(unit);
+		const end = this.#end.startOf(unit);
+		return (
+			Math.floor(end.diff(start, unit).as(unit)) +
+			(end.toMillis() !== this.#end.toMillis() ? 1 : 0)
+		);
 	}
 
 	/** Duration object between start and end. */
@@ -211,6 +259,40 @@ export class Interval {
 		}
 		if (current !== undefined) out.push(current);
 		return out;
+	}
+
+	/**
+	 * The time covered by exactly one of the intervals (Luxon's `Interval.xor`).
+	 */
+	static xor(intervals: readonly Interval[]): Interval[] {
+		const edges = intervals
+			.flatMap((i) => [
+				{ time: i.#start, start: true },
+				{ time: i.#end, start: false },
+			])
+			.sort((a, b) => a.time.toMillis() - b.time.toMillis());
+		let open: DateTime | undefined;
+		let depth = 0;
+		const results: Interval[] = [];
+		for (const edge of edges) {
+			depth += edge.start ? 1 : -1;
+			if (depth === 1) {
+				open = edge.time;
+			} else {
+				if (open && open.toMillis() !== edge.time.toMillis()) {
+					results.push(new Interval(open, edge.time));
+				}
+				open = undefined;
+			}
+		}
+		return Interval.merge(results);
+	}
+
+	/** The parts of this interval none of `intervals` covers (Luxon's `difference`). */
+	difference(...intervals: Interval[]): Interval[] {
+		return Interval.xor([this, ...intervals])
+			.map((i) => this.intersection(i))
+			.filter((i): i is Interval => i !== null && !i.isEmpty());
 	}
 
 	// ─── Split ──────────────────────────────────────────────

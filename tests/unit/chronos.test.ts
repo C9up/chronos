@@ -20,7 +20,7 @@ describe("Chronos", () => {
 		const a = new DateTime("2026-01-15T10:00:00Z");
 		// `a.diff(b)` is `a - b`, as Luxon spells it: the 15th is two days
 		// BEFORE the 17th, so the answer is negative.
-		expect(a.diff("2026-01-17T10:00:00.000Z", "day")).toBe(-2);
+		expect(a.diff("2026-01-17T10:00:00.000Z", "day").as("day")).toBe(-2);
 
 		const b = new DateTime("2026-01-15T10:34:55.000Z");
 		expect(b.startOf("day").toISO()).toBe("2026-01-15T00:00:00.000Z");
@@ -185,12 +185,12 @@ describe("Chronos", () => {
 describe("chronos > diff matches Luxon", () => {
 	it("is negative when the other instant is later", () => {
 		const dt = new DateTime("2026-01-15T10:00:00Z");
-		expect(dt.diff("2026-03-15T10:00:00.000Z", "month")).toBe(-2);
+		expect(dt.diff("2026-03-15T10:00:00.000Z", "month").as("month")).toBe(-2);
 	});
 
 	it("is positive when the other instant is earlier", () => {
 		const dt = new DateTime("2026-03-15T00:00:00.000Z");
-		expect(dt.diff("2026-01-15T00:00:00.000Z", "month")).toBe(2);
+		expect(dt.diff("2026-01-15T00:00:00.000Z", "month").as("month")).toBe(2);
 	});
 
 	it("counts a clamped month as whole", () => {
@@ -198,27 +198,27 @@ describe("chronos > diff matches Luxon", () => {
 		// exactly one month away — not "not quite one", which is what the
 		// truncating version answered.
 		const dt = new DateTime("2026-01-31T00:00:00.000Z");
-		expect(dt.diff("2026-02-28T00:00:00.000Z", "month")).toBe(-1);
+		expect(dt.diff("2026-02-28T00:00:00.000Z", "month").as("month")).toBe(-1);
 	});
 
 	it("counts whole years the same way", () => {
 		const dt = new DateTime("2024-01-15T00:00:00.000Z");
-		expect(dt.diff("2026-01-15T00:00:00.000Z", "year")).toBe(-2);
+		expect(dt.diff("2026-01-15T00:00:00.000Z", "year").as("year")).toBe(-2);
 	});
 
 	it("keeps the fraction instead of truncating it", () => {
 		const dt = new DateTime("2026-06-05T14:30:00Z");
-		expect(dt.diff("2026-01-01T00:00:00Z", "day")).toBeCloseTo(
+		expect(dt.diff("2026-01-01T00:00:00Z", "day").as("day")).toBeCloseTo(
 			155.60416666666666,
 			10,
 		);
-		expect(dt.diff("2026-01-01T00:00:00Z", "hour")).toBe(3734.5);
+		expect(dt.diff("2026-01-01T00:00:00Z", "hour").as("hour")).toBe(3734.5);
 	});
 
 	it("measures a partial month against the month it falls in", () => {
 		// 15 days and 10 hours into a 28-day February, not into an averaged 30.
 		const dt = new DateTime("2026-03-15T10:00:00Z");
-		expect(dt.diff("2026-02-28T00:00:00Z", "month")).toBeCloseTo(
+		expect(dt.diff("2026-02-28T00:00:00Z", "month").as("month")).toBeCloseTo(
 			0.5505952380952381,
 			10,
 		);
@@ -550,7 +550,8 @@ describe("chronos > timezone support (36.11)", () => {
 		const utc = new DateTime("2026-07-15T14:00:00Z");
 		const paris = utc.setZone("Europe/Paris");
 		expect(paris.zoneName).toBe("Europe/Paris");
-		expect(paris.toISO()).toBe("2026-07-15T14:00:00.000Z"); // same instant
+		expect(paris.toUTC().toISO()).toBe("2026-07-15T14:00:00.000Z"); // same instant
+		expect(paris.toISO()).toBe("2026-07-15T16:00:00.000+02:00"); // Luxon's form
 		expect(paris.toZonedISO()).toContain("16:00:00"); // wall-clock +2h
 	});
 

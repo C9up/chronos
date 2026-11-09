@@ -10,7 +10,12 @@
  *
  * @implements Epic 36 — Chronos
  */
-import { Duration, type DurationObject } from "./Duration.js";
+import {
+	Duration,
+	type DurationObject,
+	type DurationUnit,
+} from "./Duration.js";
+import { formatLuxon } from "./format.js";
 import { nativeChronos } from "./native.js";
 import { normalizeIso } from "./utils.js";
 
@@ -273,6 +278,30 @@ function casualUnitMs(unit: string): number {
 	return ms;
 }
 
+const DIFF_ORDER: readonly DurationUnit[] = [
+	"years",
+	"months",
+	"weeks",
+	"days",
+	"hours",
+	"minutes",
+	"seconds",
+	"milliseconds",
+];
+const CALENDAR_UNITS: ReadonlySet<DurationUnit> = new Set([
+	"years",
+	"months",
+	"weeks",
+	"days",
+]);
+
+function durationUnitOf(unit: string): DurationUnit {
+	const plural = unit.endsWith("s") ? unit : `${unit}s`;
+	const found = DIFF_ORDER.find((u) => u === plural);
+	if (found === undefined) throw new RangeError(`Unsupported unit: ${unit}`);
+	return found;
+}
+
 function isCalendarUnit(unit: DateUnit): boolean {
 	return (
 		unit === "day" || unit === "week" || unit === "month" || unit === "year"
@@ -476,6 +505,8 @@ function assertZone(zone: string): void {
 export class DateTime {
 	#iso: string;
 	#zone: string;
+	/** Locale for names in `toFormat` and for `toLocaleString`; en-US unless set. */
+	#locale = "en-US";
 
 	/**
 	 * @throws on a zone the tz database does not know. An unknown zone used to
@@ -488,8 +519,55 @@ export class DateTime {
 	}
 
 	static from(input: DateInput): DateTime {
-		if (input instanceof DateTime) return new DateTime(input.#iso, input.#zone);
+		if (input instanceof DateTime) return input.#derive(input.#iso);
 		return new DateTime(toIso(input));
+	}
+
+	/** A value derived from this one: same zone (unless given) and locale. */
+	#derive(input: string | Date, zone = this.#zone): DateTime {
+		const out = new DateTime(input, zone);
+		out.#locale = this.#locale;
+		return out;
+	}
+
+	/** Now, or the given wall clock, in the host's zone (Luxon's `DateTime.local`). */
+	static local(
+		year?: number,
+		month = 1,
+		day = 1,
+		hour = 0,
+		minute = 0,
+		second = 0,
+		millisecond = 0,
+	): DateTime {
+		const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		if (year === undefined) return DateTime.now(zone);
+		return DateTime.fromObject(
+			{ year, month, day, hour, minute, second, millisecond },
+			{ zone },
+		);
+	}
+
+	/** Now, or the given wall clock, in UTC (Luxon's `DateTime.utc`). */
+	static utc(
+		year?: number,
+		month = 1,
+		day = 1,
+		hour = 0,
+		minute = 0,
+		second = 0,
+		millisecond = 0,
+	): DateTime {
+		if (year === undefined) return DateTime.now();
+		return DateTime.fromObject({
+			year,
+			month,
+			day,
+			hour,
+			minute,
+			second,
+			millisecond,
+		});
 	}
 	static now(zone?: string): DateTime {
 		return new DateTime(new Date(), zone ?? "UTC");
@@ -585,11 +663,74 @@ export class DateTime {
 		return nativeChronos().zoneOffset(this.#iso, this.#zone);
 	}
 
-	setZone(zone: string): DateTime {
-		return new DateTime(this.#iso, zone);
+	/**
+	 * The same instant in another zone, or — with `keepLocalTime` — the same
+	 * wall clock in another zone (a different instant), as Luxon's `setZone`.
+	 */
+	setZone(zone: string, options: { keepLocalTime?: boolean } = {}): DateTime {
+		assertZone(zone);
+		if (!options.keepLocalTime) return this.#derive(this.#iso, zone);
+		return this.#derive(new Date(wallClockMs(this.calendar, zone)), zone);
 	}
 	toUTC(): DateTime {
-		return new DateTime(this.#iso, "UTC");
+		return this.#derive(this.#iso, "UTC");
+	}
+
+	get locale(): string {
+		return this.#locale;
+	}
+
+	/** A copy whose names (`toFormat`) and `toLocaleString` default use `locale`. */
+	setLocale(locale: string): DateTime {
+		const [canonical] = Intl.getCanonicalLocales(locale);
+		if (canonical === undefined)
+			throw new RangeError(`Invalid locale: ${locale}`);
+		const out = this.#derive(this.#iso);
+		out.#locale = canonical;
+		return out;
+	}
+
+	/** Always true: chronos refuses invalid input instead of building an invalid value. */
+	get isValid(): boolean {
+		return true;
+	}
+
+	/**
+	 * A copy with some calendar fields replaced, read on this value's wall
+	 * clock (Luxon's `set`). Changing the month keeps the day within it unless
+	 * the day is given too.
+	 *
+	 * @throws RangeError on a field out of range.
+	 */
+	set(values: {
+		year?: number;
+		month?: number;
+		day?: number;
+		hour?: number;
+		minute?: number;
+		second?: number;
+		millisecond?: number;
+	}): DateTime {
+		const c = this.calendar;
+		const mixed: WallClock = {
+			year: values.year ?? c.year,
+			month: values.month ?? c.month,
+			day: values.day ?? c.day,
+			hour: values.hour ?? c.hour,
+			minute: values.minute ?? c.minute,
+			second: values.second ?? c.second,
+			millisecond: values.millisecond ?? c.millisecond,
+		};
+		if (
+			values.day === undefined &&
+			Number.isInteger(mixed.month) &&
+			mixed.month >= 1 &&
+			mixed.month <= 12
+		) {
+			mixed.day = Math.min(mixed.day, daysInMonthOf(mixed.year, mixed.month));
+		}
+		assertWallClock(mixed, JSON.stringify(values));
+		return this.#derive(new Date(wallClockMs(mixed, this.#zone)));
 	}
 
 	toZonedISO(): string {
@@ -651,10 +792,7 @@ export class DateTime {
 		let out: DateTime = this.#plusUnit(months, "month");
 		if (days !== 0) out = out.#plusUnit(days, "day");
 		if (elapsed === 0) return out;
-		return new DateTime(
-			new Date(out.toMillis() + Math.round(elapsed)),
-			this.#zone,
-		);
+		return this.#derive(new Date(out.toMillis() + Math.round(elapsed)));
 	}
 
 	#plusUnit(amount: number, unit: DateUnit): DateTime {
@@ -678,10 +816,9 @@ export class DateTime {
 					? n.addInZone(this.#iso, whole, unit, this.#zone)
 					: n.add(this.#iso, whole, unit);
 		const fraction = amount - whole;
-		if (fraction === 0) return new DateTime(shifted, this.#zone);
-		return new DateTime(
+		if (fraction === 0) return this.#derive(shifted);
+		return this.#derive(
 			new Date(Date.parse(shifted) + Math.round(fraction * unitMs)),
-			this.#zone,
 		);
 	}
 	minus(amount: number, unit: DateUnit): DateTime;
@@ -710,19 +847,74 @@ export class DateTime {
 		return this.#plusUnit(-amountOrDuration, unit);
 	}
 
-	diff(other: DateInput, unit: DateUnit): number {
+	/**
+	 * `this - other` as a Duration in the given unit(s), as Luxon's `diff`:
+	 * calendar units are counted on this value's calendar (a day across a DST
+	 * change is one day), the lowest unit keeps its fraction, and clock units
+	 * take what is left. `.as(unit)` reads it as a number.
+	 */
+	diff(
+		other: DateInput,
+		unit:
+			| DateUnit
+			| DurationUnit
+			| "millisecond"
+			| ReadonlyArray<DateUnit | DurationUnit | "millisecond"> = "milliseconds",
+	): Duration {
+		const units = (Array.isArray(unit) ? unit : [unit]).map(durationUnitOf);
+		const ordered = DIFF_ORDER.filter((u) => units.includes(u));
+		if (ordered.length === 0) throw new RangeError("diff needs a unit");
+		const o = DateTime.from(other).setZone(this.#zone);
+		const thisIsLater = this.toMillis() >= o.toMillis();
+		const earlier = thisIsLater ? o : this;
+		const later = thisIsLater ? this : o;
+
+		const calendar = ordered.filter((u) => CALENDAR_UNITS.has(u));
+		const clock = ordered.filter((u) => !CALENDAR_UNITS.has(u));
+		const results: DurationObject = {};
+		let cursor = earlier;
+		for (const u of calendar) {
+			results[u] = Math.trunc(later.#diffNumber(cursor, u));
+			cursor = earlier.plus(results);
+		}
+		let out: Duration;
+		const lowest = calendar.at(-1);
+		if (clock.length === 0 && lowest !== undefined) {
+			results[lowest] =
+				(results[lowest] ?? 0) + later.#diffNumber(cursor, lowest);
+			out = Duration.fromObject(results);
+		} else {
+			out = Duration.fromMillis(later.toMillis() - cursor.toMillis())
+				.shiftTo(...clock)
+				.plus(results);
+		}
+		return thisIsLater ? out : out.negate();
+	}
+
+	/** `this - other` in one unit, as a fractional number (calendar-aware). */
+	#diffNumber(other: DateTime, unit: DurationUnit): number {
 		const n = nativeChronos();
-		const otherIso = toIso(other);
-		// Calendar units count on the value's calendar: across a DST change a
-		// day is still one day, as plus(1, "day") made it.
-		return this.#zone !== "UTC" && isCalendarUnit(unit)
-			? n.diffInZone(this.#iso, otherIso, unit, this.#zone)
-			: n.diff(this.#iso, otherIso, unit);
+		const singular = unit.slice(0, -1);
+		return CALENDAR_UNITS.has(unit)
+			? n.diffInZone(this.#iso, other.#iso, singular, this.#zone)
+			: n.diff(this.#iso, other.#iso, unit);
 	}
 
 	// ─── Comparison ─────────────────────────────────────────
 
+	/**
+	 * Same instant — and, against another DateTime, same zone and locale, as
+	 * Luxon's `equals`. Compare `toMillis()` (or use `<`, `>`) for the instant
+	 * alone.
+	 */
 	equals(other: DateInput): boolean {
+		if (other instanceof DateTime) {
+			return (
+				this.#iso === other.#iso &&
+				this.#zone === other.#zone &&
+				this.#locale === other.#locale
+			);
+		}
 		return this.#iso === toIso(other);
 	}
 	isBefore(other: DateInput): boolean {
@@ -731,10 +923,10 @@ export class DateTime {
 	isAfter(other: DateInput): boolean {
 		return toMs(this) > toMs(other);
 	}
+	/** Whether `other` falls in the same `unit` as this value, on this value's calendar. */
 	hasSame(other: DateInput, unit: BoundUnit): boolean {
-		return (
-			this.startOf(unit).toISO() === DateTime.from(other).startOf(unit).toISO()
-		);
+		const o = DateTime.from(other).setZone(this.#zone);
+		return this.startOf(unit).toMillis() === o.startOf(unit).toMillis();
 	}
 	isSameDay(other: DateInput): boolean {
 		return this.hasSame(other, "day");
@@ -752,22 +944,20 @@ export class DateTime {
 	 */
 	startOf(unit: BoundUnit): DateTime {
 		const n = nativeChronos();
-		return new DateTime(
+		return this.#derive(
 			this.#zone === "UTC"
 				? n.startOf(this.#iso, unit)
 				: n.startOfInZone(this.#iso, unit, this.#zone),
-			this.#zone,
 		);
 	}
 
 	/** The last instant of `unit` — see {@link startOf} on the shared routine. */
 	endOf(unit: BoundUnit): DateTime {
 		const n = nativeChronos();
-		return new DateTime(
+		return this.#derive(
 			this.#zone === "UTC"
 				? n.endOf(this.#iso, unit)
 				: n.endOfInZone(this.#iso, unit, this.#zone),
-			this.#zone,
 		);
 	}
 
@@ -779,6 +969,11 @@ export class DateTime {
 
 	// ─── Formatting ─────────────────────────────────────────
 
+	/**
+	 * Format with chronos's moment-style tokens (`YYYY`, `YY`, `MM`, `DD`,
+	 * `HH`, `mm`, `ss`, `Z`; `[text]` is literal) on this value's wall clock.
+	 * Luxon's tokens (`yyyy`, `dd`, `LLL`, …) are {@link toFormat}.
+	 */
 	format(pattern = "YYYY-MM-DD HH:mm:ss"): string {
 		if (this.#zone !== "UTC") {
 			return formatFromIsoString(
@@ -789,20 +984,97 @@ export class DateTime {
 		return nativeChronos().format(this.#iso, pattern);
 	}
 
+	/**
+	 * Format with Luxon's tokens (`yyyy-MM-dd HH:mm`, `dd LLL yyyy`, `EEEE`,
+	 * `ZZ`, macros such as `DD` or `t`; `'quoted'` text is literal), on this
+	 * value's wall clock. {@link format} keeps chronos's moment-style tokens.
+	 */
+	toFormat(pattern: string): string {
+		return this.#luxonFormat(pattern, false);
+	}
+
+	/** `allowZ`: a UTC value writes its offset as `Z` (ISO and SQL output). */
+	#luxonFormat(pattern: string, allowZ = true): string {
+		return formatLuxon(pattern, {
+			parts: this.calendar,
+			ts: this.toMillis(),
+			offset: this.offset,
+			zone: this.#zone,
+			locale: this.#locale,
+			allowZ: allowZ && this.#zone === "UTC",
+		});
+	}
+
 	toDate(): Date {
 		return new Date(this.#iso);
 	}
-	toISO(): string {
-		return this.#iso;
+
+	/**
+	 * ISO 8601 on this value's wall clock, as Luxon's `toISO`: `…Z` in UTC,
+	 * the local offset (`2026-08-10T12:00:00.000+02:00`) in any other zone —
+	 * the same instant either way.
+	 */
+	toISO(
+		options: { suppressMilliseconds?: boolean; includeOffset?: boolean } = {},
+	): string {
+		const plain =
+			options.suppressMilliseconds !== true && options.includeOffset !== false;
+		if (this.#zone === "UTC" && plain) return this.#iso;
+		return this.#luxonFormat(`yyyy-MM-dd'T'${this.#timeFormat(options)}`);
 	}
+
+	#timeFormat(options: {
+		suppressMilliseconds?: boolean;
+		includeOffset?: boolean;
+	}): string {
+		const ms =
+			options.suppressMilliseconds === true && this.millisecond === 0
+				? ""
+				: ".SSS";
+		return `HH:mm:ss${ms}${options.includeOffset === false ? "" : "ZZ"}`;
+	}
+
+	/** `yyyy-MM-dd` on this value's calendar. */
+	toISODate(): string {
+		return this.#luxonFormat("yyyy-MM-dd");
+	}
+
+	/** `HH:mm:ss.SSS` plus the offset, on this value's wall clock. */
+	toISOTime(
+		options: { suppressMilliseconds?: boolean; includeOffset?: boolean } = {},
+	): string {
+		return this.#luxonFormat(this.#timeFormat(options));
+	}
+
+	/** `yyyy-MM-dd`, as SQL writes a date. */
+	toSQLDate(): string {
+		return this.toISODate();
+	}
+
+	/** `HH:mm:ss.SSS +02:00` (`Z` in UTC), as Luxon's `toSQLTime`. */
+	toSQLTime(options: { includeOffset?: boolean } = {}): string {
+		return this.#luxonFormat(
+			options.includeOffset === false ? "HH:mm:ss.SSS" : "HH:mm:ss.SSS ZZ",
+		);
+	}
+
+	/** `yyyy-MM-dd HH:mm:ss.SSS +02:00`, as Luxon's `toSQL`. */
+	toSQL(options: { includeOffset?: boolean } = {}): string {
+		return `${this.toSQLDate()} ${this.toSQLTime(options)}`;
+	}
+
 	toString(): string {
-		return this.#iso;
+		return this.toISO();
 	}
 	toJSON(): string {
-		return this.#iso;
+		return this.toISO();
 	}
 	toMillis(): number {
 		return new Date(this.#iso).getTime();
+	}
+	/** Epoch milliseconds, so `a < b` and `a - b` work as with Luxon. */
+	valueOf(): number {
+		return this.toMillis();
 	}
 	toSeconds(): number {
 		return Math.floor(this.toMillis() / 1000);
@@ -814,7 +1086,7 @@ export class DateTime {
 	): string {
 		// The value's own zone, UTC included: without it Intl falls back to the
 		// host's zone and the same value prints differently per machine.
-		return new Intl.DateTimeFormat(locale, {
+		return new Intl.DateTimeFormat(locale ?? this.#locale, {
 			timeZone: this.#zone,
 			...options,
 		}).format(this.toDate());

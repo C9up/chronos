@@ -21,6 +21,17 @@ export interface DurationObject {
 }
 
 export type DurationUnit = keyof DurationObject;
+/** A unit name as Luxon accepts it: plural or singular. */
+export type DurationUnitLike =
+	| DurationUnit
+	| "year"
+	| "month"
+	| "week"
+	| "day"
+	| "hour"
+	| "minute"
+	| "second"
+	| "millisecond";
 
 const ORDERED_UNITS: DurationUnit[] = [
 	"years",
@@ -46,6 +57,87 @@ const MS_PER: Record<DurationUnit, number> = {
 	seconds: 1000,
 	milliseconds: 1,
 };
+
+/**
+ * Luxon's casual conversion matrix: how many of the lower unit one higher unit
+ * holds. It is not self-consistent (a month is 30 days but 4 weeks) — that is
+ * Luxon's, and `shiftTo` follows it so the same call gives the same units.
+ */
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MATRIX: Readonly<
+	Record<DurationUnit, Partial<Record<DurationUnit, number>>>
+> = {
+	years: {
+		months: 12,
+		weeks: 52,
+		days: 365,
+		hours: 365 * 24,
+		minutes: 365 * 24 * 60,
+		seconds: 365 * 24 * 60 * 60,
+		milliseconds: 365 * DAY_MS,
+	},
+	months: {
+		weeks: 4,
+		days: 30,
+		hours: 30 * 24,
+		minutes: 30 * 24 * 60,
+		seconds: 30 * 24 * 60 * 60,
+		milliseconds: 30 * DAY_MS,
+	},
+	weeks: {
+		days: 7,
+		hours: 7 * 24,
+		minutes: 7 * 24 * 60,
+		seconds: 7 * 24 * 60 * 60,
+		milliseconds: 7 * DAY_MS,
+	},
+	days: {
+		hours: 24,
+		minutes: 24 * 60,
+		seconds: 24 * 60 * 60,
+		milliseconds: DAY_MS,
+	},
+	hours: { minutes: 60, seconds: 60 * 60, milliseconds: 60 * 60 * 1000 },
+	minutes: { seconds: 60, milliseconds: 60 * 1000 },
+	seconds: { milliseconds: 1000 },
+	milliseconds: {},
+};
+
+/** How many `lower` one `higher` holds; both are units of the matrix. */
+function conv(higher: DurationUnit, lower: DurationUnit): number {
+	return MATRIX[higher][lower] ?? 1;
+}
+
+/**
+ * Luxon's `normalizeValues` over `units` (in descending order): carry each
+ * unit into the next one up against the sign of the whole, then push
+ * fractions down. Mutates `vals`.
+ */
+function normalizeValues(
+	vals: Record<DurationUnit, number>,
+	units: readonly DurationUnit[],
+): void {
+	let total = 0;
+	for (const u of ORDERED_UNITS) total += vals[u] * MS_PER[u];
+	const factor = total < 0 ? -1 : 1;
+	for (let i = units.length - 1; i > 0; i--) {
+		const current = units[i - 1];
+		const previous = units[i];
+		if (current === undefined || previous === undefined) continue;
+		const c = conv(current, previous);
+		const rollUp = Math.floor((vals[previous] * factor) / c);
+		vals[current] += rollUp * factor;
+		vals[previous] -= rollUp * c * factor;
+	}
+	for (let i = 1; i < units.length; i++) {
+		const previous = units[i - 1];
+		const current = units[i];
+		if (current === undefined || previous === undefined) continue;
+		const fraction = vals[previous] % 1;
+		vals[previous] -= fraction;
+		vals[current] += fraction * conv(previous, current);
+	}
+}
 
 const UNIT_NAMES: Readonly<Record<string, DurationUnit>> = {
 	year: "years",
@@ -229,7 +321,7 @@ export class Duration {
 	}
 
 	/** Get a specific unit (singular or plural name). */
-	get(unit: DurationUnit): number {
+	get(unit: DurationUnitLike): number {
 		return this.#values[normalizeUnit(unit)];
 	}
 
@@ -276,6 +368,29 @@ export class Duration {
 		return normalizeObject(other);
 	}
 
+	/** Total length in milliseconds, on the casual matrix (Luxon's `toMillis`). */
+	toMillis(): number {
+		return this.as("milliseconds");
+	}
+
+	/** Milliseconds, so durations compare and subtract like numbers. */
+	valueOf(): number {
+		return this.toMillis();
+	}
+
+	/** Spread over every unit, years down to milliseconds (Luxon's `shiftToAll`). */
+	shiftToAll(): Duration {
+		return this.shiftTo(...ORDERED_UNITS);
+	}
+
+	/**
+	 * Re-express in the largest units that fit: 90 000 ms becomes 1 minute
+	 * 30 seconds (Luxon's `rescale`).
+	 */
+	rescale(): Duration {
+		return this.normalize().shiftToAll();
+	}
+
 	/** A Duration with `fn` applied to every unit's value (Luxon's `mapUnits`). */
 	mapUnits(fn: (value: number, unit: DurationUnit) => number): Duration {
 		const out: DurationObject = {};
@@ -285,18 +400,9 @@ export class Duration {
 		return new Duration(out);
 	}
 
-	/** Flip the sign on every unit. */
+	/** Flip the sign on every unit (a zero stays 0, never -0, as in Luxon). */
 	negate(): Duration {
-		return new Duration({
-			years: -this.#values.years,
-			months: -this.#values.months,
-			weeks: -this.#values.weeks,
-			days: -this.#values.days,
-			hours: -this.#values.hours,
-			minutes: -this.#values.minutes,
-			seconds: -this.#values.seconds,
-			milliseconds: -this.#values.milliseconds,
-		});
+		return this.mapUnits((value) => (value === 0 ? 0 : -value));
 	}
 
 	// ─── Conversion ─────────────────────────────────────────
@@ -311,31 +417,13 @@ export class Duration {
 	 */
 	normalize(): Duration {
 		const vals = { ...this.#values };
-		const units: DurationUnit[] = [
+		normalizeValues(vals, [
 			"days",
 			"hours",
 			"minutes",
 			"seconds",
 			"milliseconds",
-		];
-		const factor = this.as("milliseconds") < 0 ? -1 : 1;
-		for (let i = units.length - 1; i > 0; i--) {
-			const current = units[i - 1];
-			const previous = units[i];
-			if (current === undefined || previous === undefined) continue;
-			const conv = MS_PER[current] / MS_PER[previous];
-			const rollUp = Math.floor((vals[previous] * factor) / conv);
-			vals[current] += rollUp * factor;
-			vals[previous] -= rollUp * conv * factor;
-		}
-		for (let i = 1; i < units.length; i++) {
-			const previous = units[i - 1];
-			const current = units[i];
-			if (current === undefined || previous === undefined) continue;
-			const fraction = vals[previous] % 1;
-			vals[previous] -= fraction;
-			vals[current] += (fraction * MS_PER[previous]) / MS_PER[current];
-		}
+		]);
 		return new Duration(vals);
 	}
 
@@ -347,39 +435,56 @@ export class Duration {
 	 *     Duration.fromObject({ hours: 25 }).shiftTo('days', 'hours')
 	 *     // → { days: 1, hours: 1 }
 	 */
-	shiftTo(...requested: DurationUnit[]): Duration {
+	shiftTo(...requested: DurationUnitLike[]): Duration {
 		if (requested.length === 0) return this;
 		const units = requested.map(normalizeUnit);
-
-		// Convert the entire duration to approximate milliseconds, then greedily
-		// distribute into the requested units from largest to smallest.
-		let totalMs = 0;
-		for (const unit of ORDERED_UNITS) {
-			totalMs += this.#values[unit] * MS_PER[unit];
+		const ordered = ORDERED_UNITS.filter((u) => units.includes(u));
+		const built: Record<DurationUnit, number> = {
+			years: 0,
+			months: 0,
+			weeks: 0,
+			days: 0,
+			hours: 0,
+			minutes: 0,
+			seconds: 0,
+			milliseconds: 0,
+		};
+		const accumulated = new Map<DurationUnit, number>();
+		let last: DurationUnit | undefined;
+		// Luxon's shiftTo: higher units not asked for flow down into the next
+		// requested one, each requested unit keeps its integer part, and what is
+		// left over becomes the fraction of the last one.
+		for (const k of ORDERED_UNITS) {
+			if (ordered.includes(k)) {
+				last = k;
+				let own = 0;
+				for (const [ak, value] of accumulated) {
+					own += conv(ak, k) * value;
+					accumulated.set(ak, 0);
+				}
+				own += this.#values[k];
+				const whole = Math.trunc(own);
+				built[k] = whole;
+				accumulated.set(k, (own * 1000 - whole * 1000) / 1000);
+			} else {
+				accumulated.set(k, this.#values[k]);
+			}
 		}
-
-		const sorted = [...units].sort(
-			(a, b) => ORDERED_UNITS.indexOf(a) - ORDERED_UNITS.indexOf(b),
-		);
-		const result: DurationObject = {};
-		for (const unit of sorted) {
-			const value = Math.trunc(totalMs / MS_PER[unit]);
-			totalMs -= value * MS_PER[unit];
-			result[unit] = value;
+		if (last !== undefined) {
+			for (const [key, value] of accumulated) {
+				if (value === 0) continue;
+				built[last] += key === last ? value : value / conv(last, key);
+			}
 		}
-		// Any leftover ms goes into the smallest requested unit as a fractional part.
-		const smallest = sorted.at(-1);
-		if (totalMs !== 0 && smallest !== undefined) {
-			result[smallest] = (result[smallest] ?? 0) + totalMs / MS_PER[smallest];
-		}
-		return new Duration(result);
+		normalizeValues(built, ordered);
+		return new Duration(built);
 	}
 
 	/**
 	 * Express the total duration in a single unit (approximate for calendar
 	 * units — same caveat as `shiftTo`).
 	 */
-	as(unit: DurationUnit): number {
+	as(unit: DurationUnitLike): number {
 		let totalMs = 0;
 		for (const u of ORDERED_UNITS) {
 			totalMs += this.#values[u] * MS_PER[u];

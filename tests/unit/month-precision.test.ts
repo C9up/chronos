@@ -33,16 +33,18 @@ describe("chronos > sub-second precision in calendar arithmetic", () => {
 describe("chronos > startOf/endOf('second')", () => {
 	it("truncates and extends to the second in UTC", () => {
 		const d = new DateTime("2026-01-15T10:30:45.123Z");
-		expect(d.startOf("second").toISO()).toBe("2026-01-15T10:30:45.000Z");
-		expect(d.endOf("second").toISO()).toBe("2026-01-15T10:30:45.999Z");
+		expect(d.startOf("second").toUTC().toISO()).toBe(
+			"2026-01-15T10:30:45.000Z",
+		);
+		expect(d.endOf("second").toUTC().toISO()).toBe("2026-01-15T10:30:45.999Z");
 	});
 
 	it("behaves the same in a zone", () => {
 		// The zoned path has its own switch; a missing case would silently
 		// return the value unchanged.
 		const d = new DateTime("2026-01-15T10:30:45.123Z", "Europe/Zurich");
-		expect(d.startOf("second").toISO()).toBe("2026-01-15T10:30:45.000Z");
-		expect(d.endOf("second").toISO()).toBe("2026-01-15T10:30:45.999Z");
+		expect(d.startOf("second").toISO()).toBe("2026-01-15T11:30:45.000+01:00");
+		expect(d.endOf("second").toISO()).toBe("2026-01-15T11:30:45.999+01:00");
 	});
 
 	it("agrees with hasSame", () => {
@@ -98,6 +100,6 @@ describe("chronos > one boundary implementation, both paths", () => {
 		const d = new DateTime("2026-03-11T01:30:00Z", "Europe/Zurich");
 		// 01:30 UTC is 02:30 in Zurich, so the local day started at 23:00 UTC
 		// the previous day — a UTC truncation would answer 00:00Z.
-		expect(d.startOf("day").toISO()).toBe("2026-03-10T23:00:00.000Z");
+		expect(d.startOf("day").toUTC().toISO()).toBe("2026-03-10T23:00:00.000Z");
 	});
 });
