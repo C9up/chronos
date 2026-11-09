@@ -27,37 +27,124 @@ export interface RRuleBuild {
 	until?: string;
 }
 
+const FREQUENCIES: ReadonlySet<string> = new Set([
+	"SECONDLY",
+	"MINUTELY",
+	"HOURLY",
+	"DAILY",
+	"WEEKLY",
+	"MONTHLY",
+	"YEARLY",
+]);
+const WEEKDAYS: ReadonlySet<string> = new Set([
+	"MO",
+	"TU",
+	"WE",
+	"TH",
+	"FR",
+	"SA",
+	"SU",
+]);
+const BYDAY_TOKEN =
+	/^(?:[+-]?(?:[1-9]|[1-4]\d|5[0-3]))?(?:MO|TU|WE|TH|FR|SA|SU)$/;
+
+/**
+ * The structured input is only typed, never trusted: a value that reaches the
+ * rule text unchecked (`byDay: ["MO;BYSECOND=0,0,…"]` from a JSON body) adds
+ * parts the caller never wrote.
+ */
+function invalid(field: string, value: unknown): never {
+	throw new RangeError(`toRRuleString: invalid ${field} ${String(value)}`);
+}
+
+function checkInteger(
+	field: string,
+	value: unknown,
+	min: number,
+	max: number,
+	allowZero = true,
+): number {
+	if (
+		typeof value !== "number" ||
+		!Number.isInteger(value) ||
+		value < min ||
+		value > max ||
+		(value === 0 && !allowZero)
+	) {
+		return invalid(field, value);
+	}
+	return value;
+}
+
 function pushNumericList(
 	parts: string[],
 	key: string,
-	values: number[] | undefined,
+	field: string,
+	values: readonly unknown[] | undefined,
+	range: [min: number, max: number, allowZero: boolean],
 ): void {
-	if (!values || values.length === 0) return;
-	parts.push(`${key}=${values.join(",")}`);
+	if (values === undefined) return;
+	if (!Array.isArray(values)) invalid(field, values);
+	if (values.length === 0) return;
+	const checked = values.map((v) => checkInteger(field, v, ...range));
+	parts.push(`${key}=${checked.join(",")}`);
 }
 
 export function toRRuleString(rule: RRuleBuild): string {
+	if (!FREQUENCIES.has(rule.freq)) invalid("freq", rule.freq);
 	const parts: string[] = [`FREQ=${rule.freq}`];
 
-	if (rule.interval && rule.interval !== 1)
-		parts.push(`INTERVAL=${rule.interval}`);
-	if (rule.wkst) parts.push(`WKST=${rule.wkst}`);
-	if (rule.byDay?.length) parts.push(`BYDAY=${rule.byDay.join(",")}`);
+	if (rule.interval !== undefined) {
+		const interval = checkInteger("interval", rule.interval, 1, 1_000_000_000);
+		if (interval !== 1) parts.push(`INTERVAL=${interval}`);
+	}
+	if (rule.wkst !== undefined) {
+		if (!WEEKDAYS.has(rule.wkst)) invalid("wkst", rule.wkst);
+		parts.push(`WKST=${rule.wkst}`);
+	}
+	if (rule.byDay !== undefined) {
+		if (!Array.isArray(rule.byDay)) invalid("byDay", rule.byDay);
+		for (const token of rule.byDay) {
+			if (typeof token !== "string" || !BYDAY_TOKEN.test(token))
+				invalid("byDay", token);
+		}
+		if (rule.byDay.length > 0) parts.push(`BYDAY=${rule.byDay.join(",")}`);
+	}
 
-	pushNumericList(parts, "BYMONTHDAY", rule.byMonthDay);
-	pushNumericList(parts, "BYMONTH", rule.byMonth);
-	pushNumericList(parts, "BYWEEKNO", rule.byWeekNo);
-	pushNumericList(parts, "BYYEARDAY", rule.byYearDay);
-	pushNumericList(parts, "BYSETPOS", rule.bySetPos);
-	pushNumericList(parts, "BYHOUR", rule.byHour);
-	pushNumericList(parts, "BYMINUTE", rule.byMinute);
-	pushNumericList(parts, "BYSECOND", rule.bySecond);
+	pushNumericList(parts, "BYMONTHDAY", "byMonthDay", rule.byMonthDay, [
+		-31,
+		31,
+		false,
+	]);
+	pushNumericList(parts, "BYMONTH", "byMonth", rule.byMonth, [1, 12, false]);
+	pushNumericList(parts, "BYWEEKNO", "byWeekNo", rule.byWeekNo, [
+		-53,
+		53,
+		false,
+	]);
+	pushNumericList(parts, "BYYEARDAY", "byYearDay", rule.byYearDay, [
+		-366,
+		366,
+		false,
+	]);
+	pushNumericList(parts, "BYSETPOS", "bySetPos", rule.bySetPos, [
+		-366,
+		366,
+		false,
+	]);
+	pushNumericList(parts, "BYHOUR", "byHour", rule.byHour, [0, 23, true]);
+	pushNumericList(parts, "BYMINUTE", "byMinute", rule.byMinute, [0, 59, true]);
+	pushNumericList(parts, "BYSECOND", "bySecond", rule.bySecond, [0, 59, true]);
 
-	if (rule.count !== undefined) parts.push(`COUNT=${rule.count}`);
-	if (rule.until) {
+	if (rule.count !== undefined)
+		parts.push(`COUNT=${checkInteger("count", rule.count, 0, 1_000_000_000)}`);
+	if (rule.until !== undefined) {
+		const ms =
+			typeof rule.until === "string" ? Date.parse(rule.until) : Number.NaN;
+		if (!Number.isFinite(ms)) invalid("until", rule.until);
 		// RFC 5545 §3.3.10 UNTIL format: YYYYMMDDTHHMMSSZ (no hyphens/colons/ms).
 		parts.push(
-			`UNTIL=${new Date(rule.until)
+			`UNTIL=${new Date(ms)
 				.toISOString()
 				.replace(/[-:]/g, "")
 				.replace(/\.\d+Z$/, "Z")}`,
