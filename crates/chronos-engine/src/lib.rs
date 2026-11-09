@@ -851,9 +851,9 @@ mod tests {
     }
 
     #[test]
-    fn to_iso_drops_zero_milliseconds_for_compactness() {
-        // When subseconds are zero, the compact form is preferred so the output
-        // matches `Date.toISOString().replace('.000Z', 'Z')` from the JS side.
+    fn to_iso_keeps_zero_milliseconds() {
+        // `.000` is written even when the milliseconds are zero, as Luxon's
+        // `toISO()` and `Date.toISOString()` both write it.
         let result = add("2026-04-08T14:00:00.000Z", 1, "second").unwrap();
         assert_eq!(result, "2026-04-08T14:00:01.000Z");
     }

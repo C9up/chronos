@@ -70,11 +70,11 @@ function isDateTimeLike(value: unknown): value is DateTime {
  *   string would otherwise silently land in the bind parameter and bypass the
  *   chronos engine's normalization.
  *
- * **Round-trip canonicalization:** chronos's internal ISO normalization
- * collapses trailing `.000Z` to a bare `Z`. So
- * `prepare(consume('2026-04-30T12:00:00.000Z'))` returns
- * `'2026-04-30T12:00:00Z'` — same instant, compact form. Subsecond precision
- * with non-zero digits (e.g., `.123Z`) is preserved verbatim.
+ * **Round-trip canonicalization:** `prepare` writes the UTC ISO form with
+ * milliseconds always present, as Luxon's `toISO()` does, whatever the value's
+ * zone: `prepare(consume('2026-04-30T12:00:00.000Z'))` is
+ * `'2026-04-30T12:00:00.000Z'`, and a value in Europe/Paris is stored as the
+ * same UTC instant. Precision below the millisecond is not kept.
  *
  * **Driver expectations:** `timestamp` columns may come back from the driver
  * as either an ISO 8601 `string`, a JS `Date`, or (rarely) an integer epoch.
