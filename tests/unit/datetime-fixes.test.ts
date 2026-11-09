@@ -46,3 +46,47 @@ describe("format keeps non-ASCII literal text", () => {
 		expect(zoned.format(pattern)).toBe(expected);
 	});
 });
+
+describe("plus/minus validate the amount", () => {
+	const base = DateTime.from("2026-06-01T00:00:00Z");
+
+	it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+		"refuses %s instead of treating it as 0",
+		(amount) => {
+			expect(() => base.plus(amount, "day")).toThrow(RangeError);
+			expect(() => base.minus(amount, "hour")).toThrow(RangeError);
+		},
+	);
+
+	it("refuses a value that is not a number", () => {
+		expect(() => Reflect.apply(base.plus, base, ["1", "day"])).toThrow(
+			RangeError,
+		);
+	});
+
+	it("carries a fraction as elapsed time, like Luxon", () => {
+		expect(base.plus(1.5, "day").toISO()).toBe("2026-06-02T12:00:00.000Z");
+		expect(base.plus(0.5, "hour").toISO()).toBe("2026-06-01T00:30:00.000Z");
+		expect(base.minus(1.5, "day").toISO()).toBe("2026-05-30T12:00:00.000Z");
+		expect(base.plus(2.5, "minute").toISO()).toBe("2026-06-01T00:02:30.000Z");
+	});
+
+	it("moves the whole part on the zone's calendar and the fraction as elapsed time", () => {
+		// 2026-03-28 12:00 Paris (+01:00) + 1 calendar day = 2026-03-29 12:00
+		// (+02:00), then + 12 h.
+		const paris = new DateTime("2026-03-28T11:00:00Z", "Europe/Paris");
+		expect(paris.plus(1.5, "day").toZonedISO()).toBe(
+			"2026-03-30T00:00:00+02:00",
+		);
+	});
+
+	it("reports a huge amount as out of range instead of a native panic", () => {
+		expect(() => base.plus(1e18, "month")).toThrow(/out of range/);
+		expect(() => base.plus(9e15, "year")).toThrow(/out of range/);
+		expect(() => base.plus(9e15, "second")).toThrow(/out of range/);
+		expect(() => base.plus(8000, "year")).toThrow(/out of range/);
+		expect(() =>
+			new DateTime("2026-06-01T00:00:00Z", "Europe/Paris").plus(9e15, "day"),
+		).toThrow(/out of range/);
+	});
+});

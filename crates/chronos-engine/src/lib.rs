@@ -5,19 +5,62 @@ use chrono_tz::Tz;
 
 pub mod rrule;
 
+/// Years a value may carry: what a four-digit ISO 8601 year can write, so every
+/// result can be read back by `parse_iso`.
+const MIN_YEAR: i32 = 0;
+const MAX_YEAR: i32 = 9999;
+
+fn out_of_range() -> String {
+    format!(
+        "Date arithmetic result is out of range: years are limited to {:04}-{}",
+        MIN_YEAR, MAX_YEAR
+    )
+}
+
+fn in_range<T: Datelike>(value: T) -> Result<T, String> {
+    if (MIN_YEAR..=MAX_YEAR).contains(&value.year()) {
+        Ok(value)
+    } else {
+        Err(out_of_range())
+    }
+}
+
+/// Seconds per clock unit, `None` for calendar units.
+fn clock_unit_seconds(unit: &str) -> Option<i64> {
+    match unit {
+        "seconds" | "second" => Some(1),
+        "minutes" | "minute" => Some(60),
+        "hours" | "hour" => Some(3600),
+        _ => None,
+    }
+}
+
+/// `amount × seconds` as a Duration, or an out-of-range error instead of the
+/// panic `Duration::seconds` raises past its bounds.
+fn checked_duration(amount: i64, seconds: i64) -> Result<Duration, String> {
+    amount
+        .checked_mul(seconds)
+        .and_then(Duration::try_seconds)
+        .ok_or_else(out_of_range)
+}
+
 pub fn add(iso: &str, amount: i64, unit: &str) -> Result<String, String> {
     let dt = parse_iso(iso)?;
-    let out = match unit.to_ascii_lowercase().as_str() {
-        "seconds" | "second" => dt + Duration::seconds(amount),
-        "minutes" | "minute" => dt + Duration::minutes(amount),
-        "hours" | "hour" => dt + Duration::hours(amount),
-        "days" | "day" => dt + Duration::days(amount),
-        "weeks" | "week" => dt + Duration::weeks(amount),
-        "months" | "month" => add_months(dt, amount),
-        "years" | "year" => add_months(dt, amount * 12),
-        _ => return Err(format!("Unsupported unit: {}", unit)),
+    let unit = unit.to_ascii_lowercase();
+    let out = match unit.as_str() {
+        "days" | "day" => dt.checked_add_signed(checked_duration(amount, 86_400)?),
+        "weeks" | "week" => dt.checked_add_signed(checked_duration(amount, 604_800)?),
+        "months" | "month" => checked_add_months(dt.naive_utc(), amount).map(|n| n.and_utc()),
+        "years" | "year" => amount
+            .checked_mul(12)
+            .and_then(|m| checked_add_months(dt.naive_utc(), m))
+            .map(|n| n.and_utc()),
+        other => match clock_unit_seconds(other) {
+            Some(seconds) => dt.checked_add_signed(checked_duration(amount, seconds)?),
+            None => return Err(format!("Unsupported unit: {}", unit)),
+        },
     };
-    Ok(to_iso(out))
+    Ok(to_iso(in_range(out.ok_or_else(out_of_range)?)?))
 }
 
 /// Whole calendar steps between two instants, plus the fraction of the step
@@ -277,34 +320,28 @@ pub fn add_in_zone(utc_iso: &str, amount: i64, unit: &str, zone: &str) -> Result
         .map_err(|_| format!("Unknown timezone: {}", zone))?;
 
     let unit_lower = unit.to_ascii_lowercase();
-    match unit_lower.as_str() {
-        // Clock units — exact durations, zone-independent.
-        "seconds" | "second" => Ok(to_iso(dt + Duration::seconds(amount))),
-        "minutes" | "minute" => Ok(to_iso(dt + Duration::minutes(amount))),
-        "hours" | "hour" => Ok(to_iso(dt + Duration::hours(amount))),
-        // Calendar units — interpreted in the local zone.
-        "days" | "day" => {
-            let local = dt.with_timezone(&tz);
-            let new_local = local.naive_local() + Duration::days(amount);
-            resolve_local(new_local, tz)
-        }
-        "weeks" | "week" => {
-            let local = dt.with_timezone(&tz);
-            let new_local = local.naive_local() + Duration::days(amount * 7);
-            resolve_local(new_local, tz)
-        }
-        "months" | "month" => {
-            let local = dt.with_timezone(&tz);
-            let naive_utc = add_months_naive(local.naive_local(), amount);
-            resolve_local(naive_utc, tz)
-        }
-        "years" | "year" => {
-            let local = dt.with_timezone(&tz);
-            let naive_utc = add_months_naive(local.naive_local(), amount * 12);
-            resolve_local(naive_utc, tz)
-        }
-        _ => Err(format!("Unsupported unit: {}", unit)),
-    }
+    let local = dt.with_timezone(&tz).naive_local();
+    let shifted = match unit_lower.as_str() {
+        // Calendar units — interpreted on the local wall clock.
+        "days" | "day" => local.checked_add_signed(checked_duration(amount, 86_400)?),
+        "weeks" | "week" => local.checked_add_signed(checked_duration(amount, 604_800)?),
+        "months" | "month" => checked_add_months(local, amount),
+        "years" | "year" => amount
+            .checked_mul(12)
+            .and_then(|m| checked_add_months(local, m)),
+        other => match clock_unit_seconds(other) {
+            // Clock units — exact durations, zone-independent.
+            Some(seconds) => {
+                let out = dt
+                    .checked_add_signed(checked_duration(amount, seconds)?)
+                    .ok_or_else(out_of_range)?;
+                return Ok(to_iso(in_range(out)?));
+            }
+            None => return Err(format!("Unsupported unit: {}", unit)),
+        },
+    };
+    let shifted = in_range(shifted.ok_or_else(out_of_range)?)?;
+    resolve_local(shifted, tz)
 }
 
 /// Diff two UTC instants with calendar-unit interpretation in the given zone.
@@ -389,19 +426,21 @@ pub fn zone_offset(utc_iso: &str, zone: &str) -> Result<i32, String> {
 /// Add months to a `NaiveDateTime`, clamping the day to the target month's
 /// max (same as the UTC `add_months` but on NaiveDateTime for zone-local use).
 fn add_months_naive(dt: NaiveDateTime, months: i64) -> NaiveDateTime {
-    let mut year = dt.year() as i64;
-    let mut month0 = dt.month0() as i64 + months;
-    year += month0.div_euclid(12);
-    month0 = month0.rem_euclid(12);
-    let month = (month0 + 1) as u32;
-    let max_day = days_in_month(year as i32, month);
-    let day = dt.day().min(max_day);
+    checked_add_months(dt, months).unwrap_or(dt)
+}
+
+/// Move by whole months, clamping the day to the target month's last one;
+/// `None` when the year leaves what an `i32` holds.
+fn checked_add_months(dt: NaiveDateTime, months: i64) -> Option<NaiveDateTime> {
+    let month0 = i64::from(dt.month0()).checked_add(months)?;
+    let year = i32::try_from(i64::from(dt.year()).checked_add(month0.div_euclid(12))?).ok()?;
+    let month = u32::try_from(month0.rem_euclid(12) + 1).ok()?;
+    let day = dt.day().min(days_in_month(year, month));
     // Nanoseconds carried through: month arithmetic moves the DATE, it does not
     // truncate the instant. Dropping them silently rounded every timestamp to the
     // whole second.
-    NaiveDate::from_ymd_opt(year as i32, month, day)
+    NaiveDate::from_ymd_opt(year, month, day)
         .and_then(|d| d.and_hms_nano_opt(dt.hour(), dt.minute(), dt.second(), dt.nanosecond()))
-        .unwrap_or(dt)
 }
 
 /// The zone's UTC offset, in seconds, at a UTC wall-clock instant.
@@ -586,28 +625,18 @@ pub fn rrule_expand(
 }
 
 fn add_months(dt: DateTime<Utc>, months: i64) -> DateTime<Utc> {
-    let mut year = dt.year() as i64;
-    let mut month0 = dt.month0() as i64 + months;
-    year += month0.div_euclid(12);
-    month0 = month0.rem_euclid(12);
-    let month = (month0 + 1) as u32;
-    let max_day = days_in_month(year as i32, month);
-    let day = dt.day().min(max_day);
-    // Nanoseconds carried through — see add_months_naive.
-    NaiveDate::from_ymd_opt(year as i32, month, day)
-        .and_then(|d| d.and_hms_nano_opt(dt.hour(), dt.minute(), dt.second(), dt.nanosecond()))
-        .map(|naive| Utc.from_utc_datetime(&naive))
+    checked_add_months(dt.naive_utc(), months)
+        .map(|naive| naive.and_utc())
         .unwrap_or(dt)
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {
-    let first = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
-    let next = if month == 12 {
-        NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap()
-    } else {
-        NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap()
-    };
-    (next - first).num_days() as u32
+    match month {
+        4 | 6 | 9 | 11 => 30,
+        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
+        2 => 28,
+        _ => 31,
+    }
 }
 
 fn parse_iso(input: &str) -> Result<DateTime<Utc>, String> {
@@ -618,7 +647,7 @@ fn parse_iso(input: &str) -> Result<DateTime<Utc>, String> {
         return Ok(Utc.from_utc_datetime(&nd));
     }
     if let Ok(d) = NaiveDate::parse_from_str(input, "%Y-%m-%d") {
-        return Ok(Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0).unwrap()));
+        return Ok(Utc.from_utc_datetime(&d.and_time(chrono::NaiveTime::MIN)));
     }
     Err(format!("Invalid ISO date-time: {}", input))
 }
@@ -756,6 +785,26 @@ mod tests {
         // matches `Date.toISOString().replace('.000Z', 'Z')` from the JS side.
         let result = add("2026-04-08T14:00:00.000Z", 1, "second").unwrap();
         assert_eq!(result, "2026-04-08T14:00:01.000Z");
+    }
+
+    #[test]
+    fn huge_amounts_are_range_errors_not_panics() {
+        let base = "2026-06-01T00:00:00.000Z";
+        for unit in ["second", "minute", "hour", "day", "week", "month", "year"] {
+            for amount in [i64::MAX, i64::MIN, 1_000_000_000_000_000_000] {
+                let err = add(base, amount, unit).unwrap_err();
+                assert!(err.contains("out of range"), "{} {}: {}", amount, unit, err);
+                let err = add_in_zone(base, amount, unit, "Europe/Paris").unwrap_err();
+                assert!(err.contains("out of range"), "{} {}: {}", amount, unit, err);
+            }
+        }
+        assert!(add(base, 7974, "year")
+            .unwrap_err()
+            .contains("out of range"));
+        assert_eq!(add(base, 7973, "year").unwrap(), "9999-06-01T00:00:00.000Z");
+        assert!(add(base, -2027, "year")
+            .unwrap_err()
+            .contains("out of range"));
     }
 
     #[test]

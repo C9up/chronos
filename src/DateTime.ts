@@ -157,6 +157,26 @@ function toMs(value: DateInput): number {
 	return new Date(toIso(value)).getTime();
 }
 
+const CASUAL_UNIT_MS: Readonly<Record<string, number>> = {
+	second: 1_000,
+	minute: 60_000,
+	hour: 3_600_000,
+	day: 86_400_000,
+	week: 604_800_000,
+	month: 30 * 86_400_000,
+	year: 365 * 86_400_000,
+};
+
+/** Milliseconds in one unit on Luxon's casual matrix; throws on an unknown unit. */
+function casualUnitMs(unit: string): number {
+	const singular = unit.endsWith("s") ? unit.slice(0, -1) : unit;
+	const ms = Object.hasOwn(CASUAL_UNIT_MS, singular)
+		? CASUAL_UNIT_MS[singular]
+		: undefined;
+	if (ms === undefined) throw new Error(`Unsupported unit: ${unit}`);
+	return ms;
+}
+
 function isCalendarUnit(unit: DateUnit): boolean {
 	return (
 		unit === "day" || unit === "week" || unit === "month" || unit === "year"
@@ -453,13 +473,42 @@ export class DateTime {
 
 	// ─── Arithmetic ─────────────────────────────────────────
 
+	/**
+	 * Move by `amount` units. The whole part moves on the calendar (in the
+	 * value's zone for day/week/month/year); a fraction is carried as elapsed
+	 * time at Luxon's casual lengths (day 24 h, month 30 days, year 365 days),
+	 * so `plus(1.5, "day")` is one calendar day and twelve hours.
+	 *
+	 * @throws RangeError on a non-finite amount (NaN, ±Infinity, a non-number),
+	 * which the native boundary would otherwise read as 0, and on a result
+	 * outside years 0000-9999.
+	 */
 	plus(amount: number, unit: DateUnit): DateTime {
+		if (typeof amount !== "number" || !Number.isFinite(amount)) {
+			throw new RangeError(
+				`Invalid unit value ${String(amount)}: plus/minus take a finite number`,
+			);
+		}
+		const unitMs = casualUnitMs(unit);
+		const whole = Math.trunc(amount);
+		if (!Number.isSafeInteger(whole)) {
+			throw new RangeError(
+				`plus(${amount}, '${unit}') is out of range: years are limited to 0000-9999`,
+			);
+		}
 		const n = nativeChronos();
-		const out =
-			this.#zone !== "UTC" && isCalendarUnit(unit)
-				? n.addInZone(this.#iso, amount, unit, this.#zone)
-				: n.add(this.#iso, amount, unit);
-		return new DateTime(out, this.#zone);
+		const shifted =
+			whole === 0
+				? this.#iso
+				: this.#zone !== "UTC" && isCalendarUnit(unit)
+					? n.addInZone(this.#iso, whole, unit, this.#zone)
+					: n.add(this.#iso, whole, unit);
+		const fraction = amount - whole;
+		if (fraction === 0) return new DateTime(shifted, this.#zone);
+		return new DateTime(
+			new Date(Date.parse(shifted) + Math.round(fraction * unitMs)),
+			this.#zone,
+		);
 	}
 	minus(amount: number, unit: DateUnit): DateTime {
 		return this.plus(-amount, unit);
