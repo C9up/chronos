@@ -44,8 +44,10 @@ import { DateTime } from "./DateTime.js";
 function isDateTimeLike(value: unknown): value is DateTime {
 	if (value instanceof DateTime) return true;
 	if (value === null || typeof value !== "object") return false;
-	const obj = value as { toISO?: unknown; equals?: unknown };
-	return typeof obj.toISO === "function" && typeof obj.equals === "function";
+	return (
+		typeof Reflect.get(value, "toISO") === "function" &&
+		typeof Reflect.get(value, "equals") === "function"
+	);
 }
 
 /**

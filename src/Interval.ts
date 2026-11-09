@@ -82,7 +82,7 @@ export class Interval {
 		// was being treated as 1500 seconds instead of 1.5 seconds).
 		const e =
 			"amount" in duration
-				? s.plus(duration.amount, duration.unit as DateUnit)
+				? s.plus(duration.amount, duration.unit)
 				: DateTime.fromMillis(
 						s.toMillis() + Math.round(duration.as("milliseconds")),
 					);

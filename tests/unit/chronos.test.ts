@@ -413,9 +413,9 @@ describe("chronos > Duration (36.8)", () => {
 		expect(Duration.fromObject({ hours: 2, minutes: 15 }).toHuman()).toBe(
 			"2 hours, 15 minutes",
 		);
-		expect(Duration.fromObject({ day: 1 } as never).toHuman()).toBe(
-			"0 seconds",
-		);
+		expect(
+			Reflect.apply(Duration.fromObject, Duration, [{ day: 1 }]).toHuman(),
+		).toBe("0 seconds");
 		expect(Duration.fromObject({ hours: 1 }).toHuman()).toBe("1 hour");
 	});
 

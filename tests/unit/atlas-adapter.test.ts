@@ -160,12 +160,10 @@ describe("dateTimeAtlasAdapter", () => {
 			// Either branch is acceptable — what matters is that the singleton's
 			// behavior remains unchanged.
 			const originalConsume = dateTimeAtlasAdapter.consume;
-			const tamper = () => {
-				(
-					dateTimeAtlasAdapter as { consume: (raw: unknown) => unknown }
-				).consume = () => "tampered";
-			};
-			expect(tamper).toThrow(TypeError);
+			// Reflect.set reports the refused write instead of throwing it.
+			expect(
+				Reflect.set(dateTimeAtlasAdapter, "consume", () => "tampered"),
+			).toBe(false);
 			// Behavior is unchanged regardless of whether the assignment threw —
 			// identity check beats a function-call check (a hostile tamperer could
 			// replace the function with one that mimics the test's input).

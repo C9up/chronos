@@ -599,7 +599,7 @@ export class DateTime {
 			unit = "year";
 			value = Math.round(diffMs / 31_536_000_000);
 		}
-		return new Intl.RelativeTimeFormat(options?.locale as string | undefined, {
+		return new Intl.RelativeTimeFormat(options?.locale, {
 			numeric: "auto",
 		}).format(value, unit);
 	}
@@ -612,7 +612,7 @@ export class DateTime {
 				nativeChronos().toZone(this.#iso, this.#zone).iso,
 			);
 		}
-		return nativeChronos().calendarParts(this.#iso) as CalendarParts;
+		return nativeChronos().calendarParts(this.#iso);
 	}
 	get weekday(): number {
 		return this.calendar.weekday;
