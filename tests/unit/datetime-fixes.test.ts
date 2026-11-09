@@ -253,3 +253,24 @@ describe("fromSQL reads what databases print", () => {
 		expect(() => DateTime.fromSQL("2026-02-30")).toThrow(/Invalid SQL/);
 	});
 });
+
+describe("DST gaps and overlaps resolve as Luxon does", () => {
+	it("moves a time in a spring gap forward by the size of the gap", () => {
+		const dt = new DateTime("2026-03-28T01:30:00Z", "Europe/Paris");
+		expect(dt.plus(1, "day").toZonedISO()).toBe("2026-03-29T03:30:00+02:00");
+	});
+
+	it("keeps the previous offset in an autumn overlap", () => {
+		const dt = new DateTime("2026-10-26T01:30:00Z", "Europe/Paris");
+		expect(dt.minus(1, "day").toZonedISO()).toBe("2026-10-25T02:30:00+01:00");
+		const before = new DateTime("2026-10-24T00:30:00Z", "Europe/Paris");
+		expect(before.plus(1, "day").toZonedISO()).toBe(
+			"2026-10-25T02:30:00+02:00",
+		);
+	});
+
+	it("steps over a gap of a whole day (Samoa, 2011-12-30)", () => {
+		const dt = new DateTime("2011-12-29T22:00:00Z", "Pacific/Apia");
+		expect(dt.plus(1, "day").toZonedISO()).toBe("2011-12-31T12:00:00+14:00");
+	});
+});

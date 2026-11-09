@@ -173,8 +173,9 @@ pub fn start_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String,
     let tz: Tz = zone
         .parse()
         .map_err(|_| format!("Unknown timezone: {}", zone))?;
-    let naive = start_of_naive(dt.with_timezone(&tz).naive_local(), unit)?;
-    resolve_local(naive, tz)
+    let local = dt.with_timezone(&tz);
+    let naive = start_of_naive(local.naive_local(), unit)?;
+    Ok(to_iso(resolve_from(naive, offset_of(&local), tz)?))
 }
 
 /// `end_of` against the WALL CLOCK in `zone`, returned as a UTC instant.
@@ -183,10 +184,10 @@ pub fn end_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String, S
     let tz: Tz = zone
         .parse()
         .map_err(|_| format!("Unknown timezone: {}", zone))?;
-    let next = next_unit_naive(dt.with_timezone(&tz).naive_local(), unit)?;
-    // Step back on the UTC side: `resolve_local` parses whole seconds only, so a
-    // `…:59.999` wall-clock string would be rejected.
-    let next_utc = parse_iso(&resolve_local(next, tz)?)?;
+    let local = dt.with_timezone(&tz);
+    let next = next_unit_naive(local.naive_local(), unit)?;
+    // The start of the next unit, one millisecond back on the UTC side.
+    let next_utc = resolve_from(next, offset_of(&local), tz)?;
     Ok(to_iso(next_utc - Duration::milliseconds(1)))
 }
 
@@ -341,7 +342,8 @@ pub fn add_in_zone(utc_iso: &str, amount: i64, unit: &str, zone: &str) -> Result
         },
     };
     let shifted = in_range(shifted.ok_or_else(out_of_range)?)?;
-    resolve_local(shifted, tz)
+    let previous = offset_of(&dt.with_timezone(&tz));
+    Ok(to_iso(resolve_from(shifted, previous, tz)?))
 }
 
 /// Diff two UTC instants with calendar-unit interpretation in the given zone.
@@ -352,22 +354,11 @@ pub fn add_in_zone(utc_iso: &str, amount: i64, unit: &str, zone: &str) -> Result
 /// time takes the first occurrence, and one that falls in a spring-forward gap
 /// steps forward to the first that exists.
 fn add_months_in_zone(dt: DateTime<Tz>, months: i64) -> DateTime<Tz> {
-    use chrono::LocalResult;
     let tz = dt.timezone();
     let naive = add_months_naive(dt.naive_local(), months);
-    match tz.from_local_datetime(&naive) {
-        LocalResult::Single(out) => out,
-        LocalResult::Ambiguous(first, _) => first,
-        LocalResult::None => {
-            for step in &[15, 30, 45, 60, 75, 90, 105, 120] {
-                let shifted = naive + Duration::minutes(*step);
-                if let LocalResult::Single(out) = tz.from_local_datetime(&shifted) {
-                    return out;
-                }
-            }
-            dt
-        }
-    }
+    resolve_from(naive, offset_of(&dt), tz)
+        .map(|utc| utc.with_timezone(&tz))
+        .unwrap_or(dt)
 }
 
 pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<f64, String> {
@@ -475,28 +466,27 @@ fn resolve_local(naive_local: NaiveDateTime, tz: Tz) -> Result<String, String> {
     match tz.from_local_datetime(&naive_local) {
         LocalResult::Single(dt) => Ok(to_iso(dt.with_timezone(&Utc))),
         LocalResult::Ambiguous(first, _) => Ok(to_iso(first.with_timezone(&Utc))),
+        // In a gap: the offset before it, which moves the time forward by the
+        // size of the gap (02:30 → 03:30), whatever that size is.
         LocalResult::None => {
-            // The local time falls in a DST gap (e.g. 2:30 AM during spring-forward).
-            // Try advancing in 15-minute increments up to 2 hours to find the first
-            // valid local time — handles 30-minute (Lord Howe) and 45-minute
-            // (Chatham historical) transitions, not just the common 60-minute case.
-            for step in &[15, 30, 45, 60, 75, 90, 105, 120] {
-                let shifted = naive_local + Duration::minutes(*step);
-                match tz.from_local_datetime(&shifted) {
-                    LocalResult::Single(dt) => return Ok(to_iso(dt.with_timezone(&Utc))),
-                    LocalResult::Ambiguous(first, _) => {
-                        return Ok(to_iso(first.with_timezone(&Utc)))
-                    }
-                    _ => continue,
-                }
-            }
-            Err(format!(
-                "Cannot resolve local time {} in {} (gap > 2h)",
-                naive_local,
-                tz.name()
-            ))
+            let guess = offset_seconds_at(tz, naive_local);
+            Ok(to_iso(resolve_from(naive_local, guess, tz)?))
         }
     }
+}
+
+/// The UTC offset of a zoned value, in seconds.
+fn offset_of(dt: &DateTime<Tz>) -> i64 {
+    i64::from(dt.offset().fix().local_minus_utc())
+}
+
+/// A wall clock reached by arithmetic on a value whose offset was `previous`,
+/// resolved as Luxon does: an overlap keeps the previous offset, a gap moves
+/// the time forward by the size of the gap.
+fn resolve_from(local: NaiveDateTime, previous: i64, tz: Tz) -> Result<DateTime<Utc>, String> {
+    fix_offset(local, previous, tz)
+        .map(|utc| utc.and_utc())
+        .ok_or_else(out_of_range)
 }
 
 /// Convert a **local** naive datetime (e.g. "2026-07-16T00:00:00") to a UTC
@@ -1044,6 +1034,26 @@ mod tests {
             result_paris.iso.contains("11:00:00"),
             "Expected wall-clock 11:00, got {}",
             result_paris.iso
+        );
+    }
+
+    #[test]
+    fn dst_resolution_matches_luxon() {
+        let zoned = |iso: &str, zone: &str| to_zone(iso, zone).unwrap().iso;
+        // Gap: 02:30 does not exist on the 29th; the time moves by the gap.
+        let gap = add_in_zone("2026-03-28T01:30:00.000Z", 1, "day", "Europe/Paris").unwrap();
+        assert_eq!(zoned(&gap, "Europe/Paris"), "2026-03-29T03:30:00+02:00");
+        // Overlap: 02:30 exists twice on the 25th; the previous offset (+01:00) is kept.
+        let overlap = add_in_zone("2026-10-26T01:30:00.000Z", -1, "day", "Europe/Paris").unwrap();
+        assert_eq!(zoned(&overlap, "Europe/Paris"), "2026-10-25T02:30:00+01:00");
+        // A 24-hour gap (Samoa skipped 2011-12-30) is a calendar step, not an error.
+        let apia = add_in_zone("2011-12-29T22:00:00.000Z", 1, "day", "Pacific/Apia").unwrap();
+        assert_eq!(zoned(&apia, "Pacific/Apia"), "2011-12-31T12:00:00+14:00");
+        // Lord Howe's 30-minute gap.
+        let howe = from_local("2026-10-04T02:15:00", "Australia/Lord_Howe").unwrap();
+        assert_eq!(
+            zoned(&howe, "Australia/Lord_Howe"),
+            "2026-10-04T02:45:00+11:00"
         );
     }
 
