@@ -587,10 +587,16 @@ pub fn parse_http(input: &str) -> Result<String, String> {
     Err(format!("Invalid HTTP date: {}", input))
 }
 
-/// Expand a recurrence from a UTC start instant. See [`rrule::expand`] for the
-/// zoned form and the DTSTART-in-text form.
-pub fn rrule_expand(start_iso: &str, rrule: &str, limit: usize) -> Result<Vec<String>, String> {
-    rrule::expand(Some(start_iso), rrule, limit, None)
+/// Expand a recurrence. `start_iso` is the UTC start instant, or `None` when
+/// the rule text carries its own `DTSTART` line; `tzid` runs the rule on that
+/// zone's wall clock. See [`rrule::expand`].
+pub fn rrule_expand(
+    start_iso: Option<&str>,
+    rrule: &str,
+    limit: usize,
+    tzid: Option<&str>,
+) -> Result<Vec<String>, String> {
+    rrule::expand(start_iso, rrule, limit, tzid)
 }
 
 fn add_months(dt: DateTime<Utc>, months: i64) -> DateTime<Utc> {
@@ -666,9 +672,10 @@ mod tests {
     #[test]
     fn rrule_monthly_works() {
         let out = rrule_expand(
-            "2026-01-15T15:00:00.000Z",
+            Some("2026-01-15T15:00:00.000Z"),
             "FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3",
             10,
+            None,
         )
         .unwrap();
         assert_eq!(out.len(), 3);
@@ -679,9 +686,10 @@ mod tests {
     #[test]
     fn rrule_weekly_works() {
         let out = rrule_expand(
-            "2026-01-06T15:00:00.000Z",
+            Some("2026-01-06T15:00:00.000Z"),
             "FREQ=WEEKLY;BYDAY=TU;COUNT=3",
             10,
+            None,
         )
         .unwrap();
         assert_eq!(out.len(), 3);
@@ -691,9 +699,10 @@ mod tests {
     #[test]
     fn rrule_byday_ordinal_last_sunday() {
         let out = rrule_expand(
-            "2026-01-01T12:00:00.000Z",
+            Some("2026-01-01T12:00:00.000Z"),
             "FREQ=MONTHLY;BYDAY=-1SU;COUNT=3",
             10,
+            None,
         )
         .unwrap();
         assert_eq!(out[0], "2026-01-25T12:00:00.000Z");
@@ -704,9 +713,10 @@ mod tests {
     #[test]
     fn rrule_hourly_multi_minute_with_bysetpos() {
         let out = rrule_expand(
-            "2026-01-01T10:00:00.000Z",
+            Some("2026-01-01T10:00:00.000Z"),
             "FREQ=HOURLY;BYMINUTE=0,30;BYSECOND=0;BYSETPOS=-1;COUNT=3",
             10,
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -722,9 +732,10 @@ mod tests {
     #[test]
     fn rrule_yearly_byweekno_and_byday() {
         let out = rrule_expand(
-            "2026-01-01T09:00:00.000Z",
+            Some("2026-01-01T09:00:00.000Z"),
             "FREQ=YEARLY;BYWEEKNO=1;BYDAY=MO;COUNT=2",
             10,
+            None,
         )
         .unwrap();
         assert_eq!(out[0], "2027-01-04T09:00:00.000Z");
@@ -734,9 +745,10 @@ mod tests {
     #[test]
     fn rrule_yearly_byyearday_negative() {
         let out = rrule_expand(
-            "2026-01-01T00:00:00.000Z",
+            Some("2026-01-01T00:00:00.000Z"),
             "FREQ=YEARLY;BYYEARDAY=-1;COUNT=2",
             10,
+            None,
         )
         .unwrap();
         assert_eq!(out[0], "2026-12-31T00:00:00.000Z");

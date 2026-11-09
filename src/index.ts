@@ -22,7 +22,7 @@ export {
 export type { DurationObject, DurationUnit } from "./Duration.js";
 export { Duration } from "./Duration.js";
 export { Interval } from "./Interval.js";
-export type { RRuleBuild } from "./rrule.js";
+export type { ExpandRRuleOptions, RRuleBuild } from "./rrule.js";
 export { expandRRule, toRRuleString } from "./rrule.js";
 
 // `isNativeAvailable` removed — NAPI is now mandatory (no fallback).
@@ -30,6 +30,7 @@ export { expandRRule, toRRuleString } from "./rrule.js";
 import {
 	analyzeRange,
 	containsRange,
+	type DateInput,
 	type DateRange,
 	DateTime,
 	type DateUnit,
@@ -37,7 +38,12 @@ import {
 	overlapsRange,
 	type RangeCompareOptions,
 } from "./DateTime.js";
-import { expandRRule, type RRuleBuild, toRRuleString } from "./rrule.js";
+import {
+	type ExpandRRuleOptions,
+	expandRRule,
+	type RRuleBuild,
+	toRRuleString,
+} from "./rrule.js";
 
 export function at(input?: string | Date): DateTime {
 	return new DateTime(input);
@@ -67,9 +73,9 @@ export const Chronos = {
 	rangeRelation: (a: DateRange, b: DateRange, options?: RangeCompareOptions) =>
 		analyzeRange(a, b, options),
 	rrule: (
-		startIso: string,
+		start: DateInput,
 		rrule: string | RRuleBuild,
-		limit = 100,
-	): string[] => expandRRule(startIso, rrule, limit),
+		options?: number | ExpandRRuleOptions,
+	): string[] => expandRRule(start, rrule, options),
 	buildRRule: (rule: RRuleBuild): string => toRRuleString(rule),
 };

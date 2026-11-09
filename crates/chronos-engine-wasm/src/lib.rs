@@ -94,9 +94,14 @@ pub fn parse_http(input: &str) -> Result<String, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn rrule_expand(start_iso: &str, rrule: &str, limit: usize) -> Result<JsValue, JsValue> {
-    let dates =
-        chronos_engine::rrule_expand(start_iso, rrule, limit).map_err(|e| JsValue::from_str(&e))?;
+pub fn rrule_expand(
+    start_iso: Option<String>,
+    rrule: &str,
+    limit: usize,
+    tzid: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let dates = chronos_engine::rrule_expand(start_iso.as_deref(), rrule, limit, tzid.as_deref())
+        .map_err(|e| JsValue::from_str(&e))?;
     let arr = js_sys::Array::new();
     for d in dates {
         arr.push(&JsValue::from_str(&d));

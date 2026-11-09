@@ -1531,3 +1531,69 @@ mod tests {
         assert!(out.windows(2).all(|w| w[0] < w[1]));
     }
 }
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+
+    #[test]
+    fn a_zoned_series_keeps_its_wall_clock() {
+        let out = expand(
+            Some("2026-03-23T08:00:00Z"),
+            "FREQ=WEEKLY;COUNT=2",
+            10,
+            Some("Europe/Paris"),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            vec!["2026-03-23T08:00:00.000Z", "2026-03-30T07:00:00.000Z"]
+        );
+    }
+
+    #[test]
+    fn dtstart_line_carries_the_zone() {
+        let out = expand(
+            None,
+            "DTSTART;TZID=Europe/Paris:20260328T023000\nRRULE:FREQ=DAILY;COUNT=3",
+            10,
+            None,
+        )
+        .unwrap();
+        // 02:30 on the 29th does not exist in Paris: read with the offset in
+        // force before the gap, it is 03:30 CEST.
+        assert_eq!(
+            out,
+            vec![
+                "2026-03-28T01:30:00.000Z",
+                "2026-03-29T01:30:00.000Z",
+                "2026-03-30T00:30:00.000Z"
+            ]
+        );
+    }
+
+    #[test]
+    fn conflicting_starts_and_zones_are_errors() {
+        let both = expand(
+            Some("2026-01-01T00:00:00Z"),
+            "DTSTART:20260101T000000Z\nRRULE:FREQ=DAILY",
+            1,
+            None,
+        );
+        assert!(both.unwrap_err().contains("given twice"));
+        let zones = expand(
+            None,
+            "DTSTART;TZID=Europe/Paris:20260101T000000\nRRULE:FREQ=DAILY",
+            1,
+            Some("America/New_York"),
+        );
+        assert!(zones.unwrap_err().contains("tzid option"));
+        let unknown = expand(
+            Some("2026-01-01T00:00:00Z"),
+            "FREQ=DAILY",
+            1,
+            Some("Nowhere/X"),
+        );
+        assert!(unknown.unwrap_err().contains("Unknown IANA timezone"));
+    }
+}

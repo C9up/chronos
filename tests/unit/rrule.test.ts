@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandRRule, toRRuleString } from "../../src/index.js";
+import { DateTime, expandRRule, toRRuleString } from "../../src/index.js";
 
 /**
  * [DTSTART, RRULE, limit, occurrences] — the occurrences are what rrule.js
@@ -866,5 +866,107 @@ describe("toRRuleString — runtime validation", () => {
 		).toBe(
 			"FREQ=MONTHLY;INTERVAL=2;WKST=SU;BYDAY=-1FR,+2MO,TU;BYMONTHDAY=1,-1;COUNT=4",
 		);
+	});
+});
+
+describe("expandRRule — zones (TZID)", () => {
+	const paris = (iso: string) =>
+		DateTime.from(iso).setZone("Europe/Paris").toZonedISO();
+
+	it("keeps a Paris 09:00 weekly series at 09:00 across both 2026 transitions", () => {
+		const spring = expandRRule("2026-03-23T08:00:00Z", "FREQ=WEEKLY;COUNT=2", {
+			tzid: "Europe/Paris",
+		});
+		expect(spring).toEqual([
+			"2026-03-23T08:00:00.000Z",
+			"2026-03-30T07:00:00.000Z",
+		]);
+		const autumn = expandRRule("2026-10-19T07:00:00Z", "FREQ=WEEKLY;COUNT=2", {
+			tzid: "Europe/Paris",
+		});
+		expect(autumn).toEqual([
+			"2026-10-19T07:00:00.000Z",
+			"2026-10-26T08:00:00.000Z",
+		]);
+		for (const occurrence of [...spring, ...autumn]) {
+			expect(paris(occurrence).slice(11, 16)).toBe("09:00");
+		}
+	});
+
+	it("inherits the zone of a zoned DateTime start", () => {
+		const start = new DateTime("2026-03-23T08:00:00Z", "Europe/Paris");
+		expect(expandRRule(start, "FREQ=WEEKLY;COUNT=2")).toEqual([
+			"2026-03-23T08:00:00.000Z",
+			"2026-03-30T07:00:00.000Z",
+		]);
+		// A UTC start stays on UTC, as before.
+		expect(
+			expandRRule(DateTime.from("2026-03-23T08:00:00Z"), "FREQ=WEEKLY;COUNT=2"),
+		).toEqual(["2026-03-23T08:00:00.000Z", "2026-03-30T08:00:00.000Z"]);
+	});
+
+	it("reads DTSTART;TZID from the iCalendar text", () => {
+		expect(
+			expandRRule(
+				"DTSTART;TZID=Europe/Paris:20260323T090000\nRRULE:FREQ=WEEKLY;COUNT=2",
+			),
+		).toEqual(["2026-03-23T08:00:00.000Z", "2026-03-30T07:00:00.000Z"]);
+		expect(
+			expandRRule("DTSTART:20260323T080000Z\r\nRRULE:FREQ=DAILY;COUNT=2", 5),
+		).toEqual(["2026-03-23T08:00:00.000Z", "2026-03-24T08:00:00.000Z"]);
+	});
+
+	it("shifts a time that falls in the spring gap forward by the gap, and takes the first of two in the autumn overlap", () => {
+		expect(
+			expandRRule("2026-03-28T01:30:00Z", "FREQ=DAILY;COUNT=3", {
+				tzid: "Europe/Paris",
+			}).map(paris),
+		).toEqual([
+			"2026-03-28T02:30:00+01:00",
+			"2026-03-29T03:30:00+02:00",
+			"2026-03-30T02:30:00+02:00",
+		]);
+		expect(
+			expandRRule("2026-10-24T00:30:00Z", "FREQ=DAILY;COUNT=3", {
+				tzid: "Europe/Paris",
+			}).map(paris),
+		).toEqual([
+			"2026-10-24T02:30:00+02:00",
+			"2026-10-25T02:30:00+02:00",
+			"2026-10-26T02:30:00+01:00",
+		]);
+	});
+
+	it("reads a floating UNTIL on the zone's wall clock", () => {
+		expect(
+			expandRRule("2026-03-27T08:00:00Z", "FREQ=DAILY;UNTIL=20260330T090000", {
+				tzid: "Europe/Paris",
+			}).map(paris),
+		).toEqual([
+			"2026-03-27T09:00:00+01:00",
+			"2026-03-28T09:00:00+01:00",
+			"2026-03-29T09:00:00+02:00",
+			"2026-03-30T09:00:00+02:00",
+		]);
+	});
+
+	it("refuses an unknown zone, a missing start and a start given twice", () => {
+		expect(() =>
+			expandRRule("2026-01-01T00:00:00Z", "FREQ=DAILY", {
+				tzid: "Mars/Olympus",
+			}),
+		).toThrow(/Unknown IANA timezone/);
+		expect(() => expandRRule("RRULE:FREQ=DAILY;COUNT=1")).toThrow(/no start/);
+		expect(() =>
+			expandRRule(
+				"2026-01-01T00:00:00Z",
+				"DTSTART:20260101T000000Z\nRRULE:FREQ=DAILY",
+			),
+		).toThrow(/given twice/);
+		expect(() =>
+			expandRRule(
+				"DTSTART;TZID=Europe/Paris:20260101T000000Z\nRRULE:FREQ=DAILY",
+			),
+		).toThrow(/both a TZID and a UTC/);
 	});
 });

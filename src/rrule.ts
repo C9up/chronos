@@ -1,3 +1,4 @@
+import { type DateInput, DateTime } from "./DateTime.js";
 import { nativeChronos } from "./native.js";
 
 export type RRuleWeekday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
@@ -155,24 +156,37 @@ export function toRRuleString(rule: RRuleBuild): string {
 }
 
 /**
- * Expand an RRULE into concrete occurrence dates. **NAPI-only** — the Rust
- * engine handles the full RFC 5545 spec (BYDAY, BYSETPOS, BYMONTHDAY,
- * BYWEEKNO, BYYEARDAY, UNTIL, COUNT, INTERVAL, WKST). No TS fallback.
- */
-/**
- * Hard cap on `expandRRule(... , limit)` so a caller passing an absurd
- * number (or one derived from user input) can't ask the Rust engine to
- * allocate gigabytes / run for seconds. 10_000 covers any realistic
- * pagination + cushion (a year of every-minute occurrences = ~525k, so
- * apps wanting that should iterate or stream, not call once).
+ * Hard cap on the number of occurrences one call returns, so a caller passing
+ * an absurd limit (or one derived from user input) cannot ask for an unbounded
+ * result. 10 000 covers any realistic page; page through the series (start
+ * from the last occurrence) for more.
  */
 const MAX_RRULE_EXPAND = 10_000;
 
-export function expandRRule(
-	startIso: string,
-	rrule: string | RRuleBuild,
-	limit = 100,
-): string[] {
+export interface ExpandRRuleOptions {
+	/** Most occurrences to return (1 – 10 000, default 100). */
+	limit?: number;
+	/**
+	 * IANA zone whose wall clock the rule runs on (RFC 5545 DTSTART;TZID): a
+	 * weekly 09:00 series stays at 09:00 local across DST. Defaults to the zone
+	 * of a zoned `DateTime` start, else UTC.
+	 */
+	tzid?: string;
+}
+
+function isRRuleBuild(value: unknown): value is RRuleBuild {
+	return typeof value === "object" && value !== null && "freq" in value;
+}
+
+function readOptions(
+	options: number | ExpandRRuleOptions | undefined,
+): ExpandRRuleOptions {
+	if (options === undefined) return {};
+	if (typeof options === "number") return { limit: options };
+	return options;
+}
+
+function checkLimit(limit: number): number {
 	if (!Number.isInteger(limit) || limit < 1) {
 		throw new RangeError(
 			`expandRRule(limit) must be a positive integer (got ${String(limit)})`,
@@ -184,6 +198,57 @@ export function expandRRule(
 				"Page through the result set instead of asking for everything at once.",
 		);
 	}
-	const built = typeof rrule === "string" ? rrule : toRRuleString(rrule);
-	return nativeChronos().rruleExpand(startIso, built, limit);
+	return limit;
+}
+
+/**
+ * Expand an RRULE (RFC 5545) into occurrences, returned as UTC ISO strings.
+ *
+ * - `expandRRule(start, rule, limit | { limit, tzid })` — `start` is DTSTART;
+ *   a zoned `DateTime` makes the rule run on its zone's wall clock.
+ * - `expandRRule("DTSTART;TZID=Europe/Paris:20260323T090000\nRRULE:…", options)`
+ *   — the iCalendar form, DTSTART read from the text.
+ *
+ * The Rust engine bounds the work whatever the rule says (BY* lists are sets,
+ * the text is capped at 8 KB, iteration ends at year 9999), so a rule taken
+ * from user input or an imported .ics cannot exhaust memory or hold the thread.
+ */
+export function expandRRule(
+	start: DateInput,
+	rrule: string | RRuleBuild,
+	options?: number | ExpandRRuleOptions,
+): string[];
+export function expandRRule(
+	rule: string,
+	options?: number | ExpandRRuleOptions,
+): string[];
+export function expandRRule(
+	start: DateInput,
+	rruleOrOptions?: string | RRuleBuild | number | ExpandRRuleOptions,
+	maybeOptions?: number | ExpandRRuleOptions,
+): string[] {
+	if (typeof rruleOrOptions === "string" || isRRuleBuild(rruleOrOptions)) {
+		const options = readOptions(maybeOptions);
+		const limit = checkLimit(options.limit ?? 100);
+		const from = DateTime.from(start);
+		const tzid =
+			options.tzid ?? (from.zoneName === "UTC" ? undefined : from.zoneName);
+		const rule =
+			typeof rruleOrOptions === "string"
+				? rruleOrOptions
+				: toRRuleString(rruleOrOptions);
+		return nativeChronos().rruleExpand(from.toISO(), rule, limit, tzid);
+	}
+	if (typeof start !== "string") {
+		throw new TypeError(
+			"expandRRule(rule, options) takes the rule text, with its DTSTART line, as the first argument",
+		);
+	}
+	const options = readOptions(rruleOrOptions);
+	return nativeChronos().rruleExpand(
+		undefined,
+		start,
+		checkLimit(options.limit ?? 100),
+		options.tzid,
+	);
 }

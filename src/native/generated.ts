@@ -81,7 +81,8 @@ export declare function parseSql(input: string): string;
 export declare function parseHttp(input: string): string;
 
 export declare function rruleExpand(
-	startIso: string,
+	startIso: string | undefined | null,
 	rrule: string,
 	limit: number,
+	tzid?: string | undefined | null,
 ): Array<string>;

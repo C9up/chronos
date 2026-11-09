@@ -161,9 +161,19 @@ pub fn parse_http(input: String) -> Result<String> {
 }
 
 #[napi]
-pub fn rrule_expand(start_iso: String, rrule: String, limit: u32) -> Result<Vec<String>> {
+pub fn rrule_expand(
+    start_iso: Option<String>,
+    rrule: String,
+    limit: u32,
+    tzid: Option<String>,
+) -> Result<Vec<String>> {
     let result = catch_unwind(|| -> std::result::Result<Vec<String>, String> {
-        chronos_engine::rrule_expand(&start_iso, &rrule, limit as usize)
+        chronos_engine::rrule_expand(
+            start_iso.as_deref(),
+            &rrule,
+            limit as usize,
+            tzid.as_deref(),
+        )
     });
     match result {
         Ok(Ok(value)) => Ok(value),

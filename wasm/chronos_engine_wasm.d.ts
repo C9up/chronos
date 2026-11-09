@@ -49,9 +49,10 @@ export function parse_rfc2822(input: string): string;
 export function parse_sql(input: string): string;
 export function parse_http(input: string): string;
 export function rrule_expand(
-	start: string,
+	start: string | undefined | null,
 	rrule: string,
 	limit: number,
+	tzid: string | undefined | null,
 ): string[];
 export function calendar_parts(iso: string): {
 	year: number;
