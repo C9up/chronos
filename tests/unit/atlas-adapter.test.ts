@@ -128,14 +128,20 @@ describe("dateTimeAtlasAdapter", () => {
 				"1970-01-01T00:00:00.000Z",
 				"1970-01-01T00:00:00.000Z",
 			],
-			// Year > 9999 — JS Date supports up to year 275760 with the extended
-			// `±YYYYYY` ISO form. Per AC line 264 ("year > 9999").
 			[
-				"far future (year 10000)",
-				"+010000-01-01T00:00:00.000Z",
-				"+010000-01-01T00:00:00.000Z",
+				"last instant chronos holds",
+				"9999-12-31T23:59:59.999Z",
+				"9999-12-31T23:59:59.999Z",
 			],
 		];
+		it("refuses a year past 9999 at the door instead of failing later", () => {
+			expect(() =>
+				dateTimeAtlasAdapter.consume("+010000-01-01T00:00:00.000Z"),
+			).toThrow(RangeError);
+			expect(() =>
+				dateTimeAtlasAdapter.consume(new Date(253402300800000)),
+			).toThrow(/out of range/);
+		});
 		for (const [label, input, expected] of cases) {
 			it(`${label}: ${input} → ${expected}`, () => {
 				const consumed = dateTimeAtlasAdapter.consume(input);

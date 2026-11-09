@@ -80,10 +80,10 @@ function isDateTimeLike(value: unknown): value is DateTime {
  * as either an ISO 8601 `string`, a JS `Date`, or (rarely) an integer epoch.
  * `node-postgres` returns `Date` for `timestamp` / `timestamptz` by default;
  * SQLite returns whatever the bound type was; configuring drivers to emit
- * ISO strings or `Date` is the supported path. Strings that are NOT parseable
- * ISO 8601 will surface a `RangeError: Invalid time value` from the
- * underlying `Date` constructor — align your DB column / driver settings with
- * ISO 8601 wire format.
+ * ISO strings or `Date` is the supported path. A string that is not ISO 8601
+ * (`YYYY-MM-DD[ HH:mm:ss[.SSS]][offset]`, `T` or space) is refused with a
+ * `RangeError` — align your DB column / driver settings with that wire format.
+ * Values outside years 0000-9999 are refused the same way.
  *
  * **Timezone handling — UTC-only:** chronos's internal storage is always UTC.
  * Consequences for this adapter:
@@ -97,12 +97,8 @@ function isDateTimeLike(value: unknown): value is DateTime {
  *     fidelity matters — you will lose the offset on read and silently
  *     rebase on write.
  *   - Naive ISO (`'2026-04-30T12:00:00'` or SQLite-style
- *     `'2026-04-30 12:00:00'`, no `Z`, no offset) → parsed by `new Date(...)`
- *     in the JS runtime's **local** zone. This means the same DB row hydrates
- *     differently across machines (CI host on UTC vs. dev laptop in
- *     Europe/Zurich). Do **not** store naive timestamps in columns reaching
- *     this adapter; configure your DB / driver to emit Z-suffixed strings or
- *     `Date` instances, or pre-process via `DateTime.fromSQL`.
+ *     `'2026-04-30 12:00:00'`, no `Z`, no offset) → read as UTC, on every
+ *     host. Store UTC in such columns, or emit offset-bearing strings.
  *
  * **Auto-timestamps stack cleanly.** As of the atlas date-engine switch, atlas
  * hydrates every `@column.date()` / `@column.dateTime()` to a Chronos `DateTime`

@@ -90,3 +90,138 @@ describe("plus/minus validate the amount", () => {
 		).toThrow(/out of range/);
 	});
 });
+
+describe("strings are read as ISO 8601, the same way on every host", () => {
+	describe.each(["UTC", "Europe/Paris", "America/New_York"])(
+		"host zone %s",
+		(host) => {
+			withHostZone(host);
+
+			it("reads an offset-less time as UTC, not as host-local", () => {
+				expect(new DateTime("2026-08-10T12:00:00").toISO()).toBe(
+					"2026-08-10T12:00:00.000Z",
+				);
+				expect(new DateTime("2026-08-10 12:00:00").toISO()).toBe(
+					"2026-08-10T12:00:00.000Z",
+				);
+				expect(new DateTime("2026-08-10").toISO()).toBe(
+					"2026-08-10T00:00:00.000Z",
+				);
+			});
+
+			it("reads an offset-less time in the zone it is given", () => {
+				expect(
+					new DateTime("2026-08-10T12:00:00", "Europe/Paris").toZonedISO(),
+				).toBe("2026-08-10T12:00:00+02:00");
+				expect(
+					DateTime.fromISO("2026-08-10T12:00:00", {
+						zone: "America/New_York",
+					}).toISO(),
+				).toBe("2026-08-10T16:00:00.000Z");
+			});
+		},
+	);
+
+	it.each([
+		"1",
+		"foo 2026",
+		"March 7",
+		"2026",
+		"2026-08",
+		"Mon, 10 Aug 2026 12:00:00 GMT",
+		"2026-08-10T12",
+		"2026-08-10T25:00:00Z",
+		"2026-08-10T12:60:00Z",
+		"2026-08-10T12:00:60Z",
+		"2026-08-10T12:00:00+24:00",
+		" 2026-08-10",
+		"",
+	])("refuses %j", (text) => {
+		expect(() => new DateTime(text)).toThrow(RangeError);
+	});
+
+	it("keeps the offset forms and fractions it should read", () => {
+		expect(new DateTime("2026-08-10T12:00:00+02:00").toISO()).toBe(
+			"2026-08-10T10:00:00.000Z",
+		);
+		expect(new DateTime("2026-08-10T12:00:00-0530").toISO()).toBe(
+			"2026-08-10T17:30:00.000Z",
+		);
+		expect(new DateTime("2026-08-10 12:00:00+00").toISO()).toBe(
+			"2026-08-10T12:00:00.000Z",
+		);
+		expect(new DateTime("2026-08-10T12:00:00.123456Z").toISO()).toBe(
+			"2026-08-10T12:00:00.123Z",
+		);
+		expect(new DateTime("2026-08-10T12:00Z").toISO()).toBe(
+			"2026-08-10T12:00:00.000Z",
+		);
+	});
+});
+
+describe("values outside years 0000-9999 are refused at construction", () => {
+	it.each([
+		() => DateTime.fromMillis(253402300800000),
+		() => DateTime.fromMillis(-62198755200000),
+		() => DateTime.fromJSDate(new Date(253402300800000)),
+		() => new DateTime(new Date(-62198755200000)),
+		() => DateTime.fromObject({ year: 10000, month: 1, day: 1 }),
+		() => DateTime.fromMillis(Number.NaN),
+	])("%#", (build) => {
+		expect(build).toThrow(RangeError);
+	});
+
+	it("still holds both ends of the range", () => {
+		expect(DateTime.fromMillis(253402300799999).toISO()).toBe(
+			"9999-12-31T23:59:59.999Z",
+		);
+		expect(DateTime.fromObject({ year: 0, month: 1, day: 1 }).toISO()).toBe(
+			"0000-01-01T00:00:00.000Z",
+		);
+		expect(DateTime.fromMillis(253402300799999).plus(0, "day").year).toBe(9999);
+	});
+});
+
+describe("fromObject validates every field", () => {
+	it("reads years 0-99 literally", () => {
+		expect(DateTime.fromObject({ year: 50, month: 6, day: 1 }).toISO()).toBe(
+			"0050-06-01T00:00:00.000Z",
+		);
+		expect(new DateTime("0050-06-01").year).toBe(50);
+	});
+
+	it.each([
+		{ hour: 24 },
+		{ minute: 90 },
+		{ second: 60 },
+		{ millisecond: 1000 },
+		{ hour: 1.5 },
+		{ minute: -1 },
+		{ hour: Number.NaN },
+	])("refuses %j", (time) => {
+		expect(() =>
+			DateTime.fromObject({ year: 2026, month: 6, day: 1, ...time }),
+		).toThrow(/out of range/);
+	});
+
+	it("refuses a fractional or non-finite year, month or day", () => {
+		expect(() =>
+			DateTime.fromObject({ year: 2026.5, month: 6, day: 1 }),
+		).toThrow(RangeError);
+		expect(() =>
+			DateTime.fromObject({ year: 2026, month: 6, day: 1.5 }),
+		).toThrow(RangeError);
+		expect(() =>
+			DateTime.fromObject({ year: 2026, month: Number.NaN, day: 1 }),
+		).toThrow(RangeError);
+	});
+
+	it("builds a wall clock in a zone", () => {
+		const dt = DateTime.fromObject(
+			{ year: 2026, month: 8, day: 10, hour: 9, millisecond: 250 },
+			{ zone: "Europe/Paris" },
+		);
+		expect(dt.toISO()).toBe("2026-08-10T07:00:00.250Z");
+		expect(dt.zoneName).toBe("Europe/Paris");
+	});
+});

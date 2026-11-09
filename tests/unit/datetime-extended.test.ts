@@ -239,25 +239,25 @@ describe("chronos > DateTime > fromObject validation", () => {
 	it("rejects month outside 1..12", () => {
 		expect(() =>
 			DateTime.fromObject({ year: 2026, month: 13, day: 1 }),
-		).toThrow(/Invalid month/);
+		).toThrow(/no month 13/);
 		expect(() => DateTime.fromObject({ year: 2026, month: 0, day: 1 })).toThrow(
-			/Invalid month/,
+			/no month 0/,
 		);
 	});
 
 	it("rejects day outside 1..31", () => {
 		expect(() =>
 			DateTime.fromObject({ year: 2026, month: 1, day: 32 }),
-		).toThrow(/Invalid day/);
+		).toThrow(/no day 32/);
 		expect(() => DateTime.fromObject({ year: 2026, month: 1, day: 0 })).toThrow(
-			/Invalid day/,
+			/no day 0/,
 		);
 	});
 
 	it("rejects Feb 30 (overflow not silently coerced)", () => {
 		expect(() =>
 			DateTime.fromObject({ year: 2026, month: 2, day: 30 }),
-		).toThrow(/Invalid date object/);
+		).toThrow(/February 2026 has 28 days, so there is no day 30/);
 	});
 
 	it("accepts the minimum valid object (year/month/day)", () => {

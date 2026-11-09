@@ -110,47 +110,142 @@ function daysInMonthOf(year: number, month: number): number {
 }
 
 /**
- * Refuse a calendar date that does not exist, instead of sliding to the next
- * one that does.
- *
- * `new Date('2026-02-30')` answers 2026-03-02: the overflow semantics are right
- * for arithmetic — adding a month to January 31st has to land somewhere — and
- * wrong for reading input, where the same slide turns a typo into a fact. The
- * inconsistency was the dangerous part: '2026-13-45' threw while '2026-02-30'
- * came back as a date, so a caller wrapping this in try/catch had covered the
- * loud half and left the half that writes something false to the database.
- *
- * `fromObject` has always refused the same input; this is that check on the
- * door that was missing it. Only the written date is examined, never the
- * instant it resolves to, so an offset that legitimately moves the UTC day
- * ('2026-08-10T23:00:00-05:00' → the 11th) is untouched.
+ * The only strings a `DateTime` reads: ISO 8601 calendar dates, optionally with
+ * a time (`T` or, as SQL writes it, a space) and an offset (`Z`, `±HH`,
+ * `±HHMM`, `±HH:MM`). Anything else is refused: V8's fallback parser turns
+ * `"1"` or `"foo 2026"` into a date, and reads an offset-less time in the
+ * HOST zone, so the same text named a different instant on every machine.
  */
-const CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})(?=$|[T ])/;
+const ISO_8601 =
+	/^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,9}))?)?(?:\s?([Zz])|\s?([+-])(\d{2})(?::?(\d{2}))?)?)?$/;
 
-function assertCalendarDateExists(raw: string): void {
-	const match = CALENDAR_DATE.exec(raw);
-	// Anything else — RFC 2822, a bare year, a basic-format string — is left to
-	// `Date`, which already refuses what it cannot read.
-	if (!match) return;
-	const year = Number(match[1]);
-	const month = Number(match[2]);
-	const day = Number(match[3]);
-	if (month < 1 || month > 12) {
-		throw new Error(`Invalid date '${raw}': there is no month ${month}.`);
-	}
-	const lastDay = daysInMonthOf(year, month);
-	if (day < 1 || day > lastDay) {
-		throw new Error(
-			`Invalid date '${raw}': ${MONTH_NAMES[month - 1]} ${year} has ${lastDay} days, so there is no day ${day}.`,
-		);
-	}
+/** First and last instants a value may hold: what a four-digit ISO year writes. */
+const MIN_MS = -62_167_219_200_000; // 0000-01-01T00:00:00.000Z
+const MAX_MS = 253_402_300_799_999; // 9999-12-31T23:59:59.999Z
+
+interface WallClock {
+	year: number;
+	month: number;
+	day: number;
+	hour: number;
+	minute: number;
+	second: number;
+	millisecond: number;
 }
 
-function toIso(value: DateInput): string {
+/**
+ * Refuse a wall-clock value that does not exist, instead of sliding to the
+ * next one that does.
+ *
+ * `new Date('2026-02-30')` answers 2026-03-02 and `Date.UTC(…, 10, 90)` reads
+ * minute 90 as 11:30: the overflow semantics are right for arithmetic — adding
+ * a month to January 31st has to land somewhere — and wrong for reading input,
+ * where the same slide turns a typo into a fact. Only the written value is
+ * examined, never the instant it resolves to, so an offset that legitimately
+ * moves the UTC day ('2026-08-10T23:00:00-05:00' → the 11th) is untouched.
+ */
+function assertWallClock(c: WallClock, raw: string): void {
+	const integer = (unit: string, value: number, min: number, max: number) => {
+		if (!Number.isInteger(value) || value < min || value > max) {
+			throw new RangeError(
+				`Invalid date '${raw}': ${unit} ${String(value)} is out of range (${min}-${max}).`,
+			);
+		}
+	};
+	integer("year", c.year, 0, 9999);
+	if (!Number.isInteger(c.month) || c.month < 1 || c.month > 12) {
+		throw new RangeError(
+			`Invalid date '${raw}': there is no month ${String(c.month)}.`,
+		);
+	}
+	const lastDay = daysInMonthOf(c.year, c.month);
+	if (!Number.isInteger(c.day) || c.day < 1 || c.day > lastDay) {
+		throw new RangeError(
+			`Invalid date '${raw}': ${MONTH_NAMES[c.month - 1]} ${c.year} has ${lastDay} days, so there is no day ${String(c.day)}.`,
+		);
+	}
+	integer("hour", c.hour, 0, 23);
+	integer("minute", c.minute, 0, 59);
+	integer("second", c.second, 0, 59);
+	integer("millisecond", c.millisecond, 0, 999);
+}
+
+/** Epoch milliseconds of a UTC wall clock; years 0-99 stay literal (Date.UTC maps them to 19xx). */
+function utcMs(c: WallClock): number {
+	const d = new Date(0);
+	d.setUTCFullYear(c.year, c.month - 1, c.day);
+	d.setUTCHours(c.hour, c.minute, c.second, c.millisecond);
+	return d.getTime();
+}
+
+const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
+
+/** Epoch milliseconds of a wall clock read in `zone`. */
+function wallClockMs(c: WallClock, zone: string): number {
+	if (zone === "UTC") return utcMs(c);
+	const naive = `${pad(c.year, 4)}-${pad(c.month)}-${pad(c.day)}T${pad(c.hour)}:${pad(c.minute)}:${pad(c.second)}`;
+	return Date.parse(nativeChronos().fromLocal(naive, zone)) + c.millisecond;
+}
+
+/** The canonical UTC ISO string of an instant, refusing what chronos cannot hold. */
+function isoOfMs(ms: number, input: () => string): string {
+	if (!Number.isFinite(ms)) throw new RangeError(`Invalid date ${input()}`);
+	if (ms < MIN_MS || ms > MAX_MS) {
+		throw new RangeError(
+			`Date ${input()} is out of range: years are limited to 0000-9999.`,
+		);
+	}
+	return new Date(ms).toISOString();
+}
+
+/** Read an ISO 8601 string; an offset-less one is a wall clock in `zone`. */
+function parseIso(raw: string, zone: string): string {
+	const m = ISO_8601.exec(raw);
+	if (!m) {
+		throw new RangeError(
+			`Invalid date '${raw}': expected ISO 8601 (YYYY-MM-DD, optionally with THH:mm[:ss[.SSS]] and an offset).`,
+		);
+	}
+	const c: WallClock = {
+		year: Number(m[1]),
+		month: Number(m[2]),
+		day: Number(m[3]),
+		hour: Number(m[4] ?? 0),
+		minute: Number(m[5] ?? 0),
+		second: Number(m[6] ?? 0),
+		millisecond: Math.floor(Number(`0.${m[7] ?? "0"}`) * 1000),
+	};
+	assertWallClock(c, raw);
+	let ms: number;
+	if (m[8] !== undefined) {
+		ms = utcMs(c);
+	} else if (m[9] !== undefined) {
+		const hours = Number(m[10]);
+		const minutes = Number(m[11] ?? 0);
+		if (hours > 23 || minutes > 59) {
+			throw new RangeError(
+				`Invalid date '${raw}': the offset is out of range.`,
+			);
+		}
+		const sign = m[9] === "-" ? -1 : 1;
+		ms = utcMs(c) - sign * (hours * 60 + minutes) * 60_000;
+	} else {
+		ms = wallClockMs(c, zone);
+	}
+	return isoOfMs(ms, () => `'${raw}'`);
+}
+
+function toIso(value: DateInput, zone = "UTC"): string {
 	if (value instanceof DateTime) return value.toISO();
-	if (value instanceof Date) return normalizeIso(value.toISOString());
-	if (typeof value === "string") assertCalendarDateExists(value);
-	return normalizeIso(new Date(value).toISOString());
+	if (value instanceof Date) {
+		return normalizeIso(isoOfMs(value.getTime(), () => "(JS Date)"));
+	}
+	if (typeof value !== "string") {
+		throw new TypeError(
+			`Invalid date input: expected a string, a Date or a DateTime, got ${typeof value}`,
+		);
+	}
+	return normalizeIso(parseIso(value, zone));
 }
 
 function toMs(value: DateInput): number {
@@ -387,7 +482,7 @@ export class DateTime {
 	 */
 	constructor(input: string | Date = new Date(), zone = "UTC") {
 		assertZone(zone);
-		this.#iso = toIso(input);
+		this.#iso = toIso(input, zone);
 		this.#zone = zone;
 	}
 
@@ -399,6 +494,9 @@ export class DateTime {
 		return new DateTime(new Date(), zone ?? "UTC");
 	}
 	static fromMillis(ms: number): DateTime {
+		if (typeof ms !== "number") {
+			throw new TypeError(`fromMillis expects a number, got ${typeof ms}`);
+		}
 		return new DateTime(new Date(ms));
 	}
 	static fromSeconds(seconds: number): DateTime {
@@ -411,33 +509,49 @@ export class DateTime {
 		if (!Number.isFinite(date.getTime())) throw new Error("Invalid Date");
 		return new DateTime(date);
 	}
-	static fromObject(obj: {
-		year: number;
-		month: number;
-		day: number;
-		hour?: number;
-		minute?: number;
-		second?: number;
-		ms?: number;
-	}): DateTime {
-		if (obj.month < 1 || obj.month > 12)
-			throw new Error(`Invalid month: ${obj.month}`);
-		if (obj.day < 1 || obj.day > 31) throw new Error(`Invalid day: ${obj.day}`);
-		const d = new Date(
-			Date.UTC(
-				obj.year,
-				obj.month - 1,
-				obj.day,
-				obj.hour ?? 0,
-				obj.minute ?? 0,
-				obj.second ?? 0,
-				obj.ms ?? 0,
-			),
+	/**
+	 * Read an ISO 8601 string. An offset-less one is a wall clock in
+	 * `options.zone` (UTC by default), and the result is in that zone.
+	 */
+	static fromISO(text: string, options: { zone?: string } = {}): DateTime {
+		return new DateTime(text, options.zone ?? "UTC");
+	}
+
+	/**
+	 * Build from calendar fields, read as a wall clock in `options.zone` (UTC by
+	 * default). Every field is checked: an integer within its range (minute
+	 * 0-59, …), and a year read literally (50 is year 0050, not 1950).
+	 */
+	static fromObject(
+		obj: {
+			year: number;
+			month: number;
+			day: number;
+			hour?: number;
+			minute?: number;
+			second?: number;
+			millisecond?: number;
+			/** @deprecated spelled `millisecond`, as Luxon does. */
+			ms?: number;
+		},
+		options: { zone?: string } = {},
+	): DateTime {
+		const zone = options.zone ?? "UTC";
+		assertZone(zone);
+		const c: WallClock = {
+			year: obj.year,
+			month: obj.month,
+			day: obj.day,
+			hour: obj.hour ?? 0,
+			minute: obj.minute ?? 0,
+			second: obj.second ?? 0,
+			millisecond: obj.millisecond ?? obj.ms ?? 0,
+		};
+		assertWallClock(c, JSON.stringify(obj));
+		return new DateTime(
+			isoOfMs(wallClockMs(c, zone), () => JSON.stringify(obj)),
+			zone,
 		);
-		if (d.getUTCMonth() !== obj.month - 1 || d.getUTCDate() !== obj.day) {
-			throw new Error(`Invalid date object: ${JSON.stringify(obj)}`);
-		}
-		return new DateTime(d);
 	}
 	static fromRFC2822(input: string): DateTime {
 		return new DateTime(nativeChronos().parseRfc2822(input));
