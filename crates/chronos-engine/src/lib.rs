@@ -177,64 +177,50 @@ pub fn format(iso: &str, pattern: &str) -> Result<String, String> {
 /// convention). Outside brackets, recognized tokens are translated; anything
 /// else is escaped via `%%` so chrono treats it literally.
 fn translate_pattern(pattern: &str) -> String {
+    const TOKENS: [(&str, &str); 8] = [
+        ("YYYY", "%Y"),
+        ("YY", "%y"),
+        ("MM", "%m"),
+        ("DD", "%d"),
+        ("HH", "%H"),
+        ("mm", "%M"),
+        ("ss", "%S"),
+        // A literal Z is written `[Z]`.
+        ("Z", "%:z"),
+    ];
+    // Literal text is pushed char by char, never byte by byte: a byte of a
+    // multi-byte character pushed as a `char` is a different, Latin-1 one.
+    let push_literal = |out: &mut String, c: char| {
+        if c == '%' {
+            out.push_str("%%");
+        } else {
+            out.push(c);
+        }
+    };
     let mut out = String::with_capacity(pattern.len() * 2);
-    let bytes = pattern.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        // Literal section [...] — pass through verbatim, drop the brackets.
-        if bytes[i] == b'[' {
-            i += 1;
-            while i < bytes.len() && bytes[i] != b']' {
-                // Escape any `%` so chrono doesn't interpret it as a format directive.
-                if bytes[i] == b'%' {
-                    out.push_str("%%");
-                } else {
-                    out.push(bytes[i] as char);
-                }
-                i += 1;
+    let mut rest = pattern;
+    while let Some(c) = rest.chars().next() {
+        if c == '[' {
+            // Literal section [...] — pass through verbatim, drop the brackets.
+            let inner = &rest[1..];
+            let (literal, after) = match inner.find(']') {
+                Some(end) => (&inner[..end], &inner[end + 1..]),
+                None => (inner, ""),
+            };
+            for lc in literal.chars() {
+                push_literal(&mut out, lc);
             }
-            if i < bytes.len() {
-                i += 1;
-            } // skip closing ']'
+            rest = after;
             continue;
         }
-        // Token matching — longest match wins so `YYYY` beats `YY`.
-        let token: Option<(&str, &str)> = if i + 4 <= bytes.len() && &bytes[i..i + 4] == b"YYYY" {
-            Some(("YYYY", "%Y"))
-        } else if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"YY" {
-            Some(("YY", "%y"))
-        } else if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"MM" {
-            Some(("MM", "%m"))
-        } else if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"DD" {
-            Some(("DD", "%d"))
-        } else if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"HH" {
-            Some(("HH", "%H"))
-        } else if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"mm" {
-            Some(("mm", "%M"))
-        } else if i + 2 <= bytes.len() && &bytes[i..i + 2] == b"ss" {
-            Some(("ss", "%S"))
-        } else if bytes[i] == b'Z' {
-            // Recognized only at the position where a timezone token would
-            // legitimately appear (typically after `ss`). It is still translated
-            // here in non-bracketed positions for backward compat — users who
-            // want a literal `Z` should write `[Z]`.
-            Some(("Z", "%:z"))
-        } else {
-            None
-        };
-
-        if let Some((src, dst)) = token {
+        // Longest match first, so `YYYY` beats `YY`.
+        if let Some((src, dst)) = TOKENS.iter().find(|(src, _)| rest.starts_with(src)) {
             out.push_str(dst);
-            i += src.len();
-        } else {
-            // Pass-through char. Escape `%` so chrono won't misinterpret it.
-            if bytes[i] == b'%' {
-                out.push_str("%%");
-            } else {
-                out.push(bytes[i] as char);
-            }
-            i += 1;
+            rest = &rest[src.len()..];
+            continue;
         }
+        push_literal(&mut out, c);
+        rest = &rest[c.len_utf8()..];
     }
     out
 }
@@ -770,6 +756,19 @@ mod tests {
         // matches `Date.toISOString().replace('.000Z', 'Z')` from the JS side.
         let result = add("2026-04-08T14:00:00.000Z", 1, "second").unwrap();
         assert_eq!(result, "2026-04-08T14:00:01.000Z");
+    }
+
+    #[test]
+    fn format_keeps_multi_byte_literals() {
+        assert_eq!(
+            format("2026-06-01T00:00:00Z", "YYYY年MM月DD日").unwrap(),
+            "2026年06月01日"
+        );
+        assert_eq!(
+            format("2026-06-01T00:00:00Z", "[é] HH [à] mm°").unwrap(),
+            "é 00 à 00°"
+        );
+        assert_eq!(format("2026-06-01T00:00:00Z", "[100%]").unwrap(), "100%");
     }
 
     #[test]
