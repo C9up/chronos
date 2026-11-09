@@ -25,8 +25,8 @@ const d = DateTime.from('2026-06-05T14:30:00Z')
 d.plus(1, 'month').toISO()          // 2026-07-05T14:30:00.000Z
 d.plus({ months: 1, days: 2 })      // a Duration works too
 d.setZone('Europe/Zurich').toISO()  // 2026-06-05T16:30:00.000+02:00 (same instant)
-d.toFormat('dd/MM/yyyy HH:mm')      // 05/06/2026 14:30   (Luxon tokens)
-d.format('DD/MM/YYYY HH:mm')        // 05/06/2026 14:30   (moment-style tokens)
+d.toFormat('dd/MM/yyyy HH:mm')      // 05/06/2026 14:30   (yyyy/dd/LLL tokens)
+d.format('DD/MM/YYYY HH:mm')        // 05/06/2026 14:30   (YYYY/DD tokens)
 d.toSQL()                           // 2026-06-05 14:30:00.000 Z
 d.set({ hour: 9 }).toISO()          // 2026-06-05T09:00:00.000Z
 d.startOf('month').toISO()          // 2026-06-01T00:00:00.000Z
