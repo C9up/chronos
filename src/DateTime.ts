@@ -565,8 +565,10 @@ export class DateTime {
 		locale?: Intl.LocalesArgument,
 		options?: Intl.DateTimeFormatOptions,
 	): string {
+		// The value's own zone, UTC included: without it Intl falls back to the
+		// host's zone and the same value prints differently per machine.
 		return new Intl.DateTimeFormat(locale, {
-			...(this.#zone !== "UTC" ? { timeZone: this.#zone } : {}),
+			timeZone: this.#zone,
 			...options,
 		}).format(this.toDate());
 	}
