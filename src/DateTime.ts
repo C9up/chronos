@@ -1120,7 +1120,9 @@ export class DateTime {
 			unit = "year";
 			value = Math.round(diffMs / 31_536_000_000);
 		}
-		return new Intl.RelativeTimeFormat(options?.locale, {
+		// The value's own locale unless one is given: left undefined, Intl falls
+		// back to the host's and the same value prints differently per machine.
+		return new Intl.RelativeTimeFormat(options?.locale ?? this.#locale, {
 			numeric: "auto",
 		}).format(value, unit);
 	}

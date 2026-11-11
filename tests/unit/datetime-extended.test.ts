@@ -233,6 +233,18 @@ describe("chronos > DateTime > toRelative", () => {
 		const out = t.toRelative({ base, locale: "en" });
 		expect(out).toMatch(/years|in 2/);
 	});
+
+	it("formats in the value's own locale, not the host's", () => {
+		const base = new DateTime("2026-06-15T00:00:00Z");
+		const t = new DateTime("2026-06-12T00:00:00Z");
+		expect(t.setLocale("de").toRelative({ base })).toBe("vor 3 Tagen");
+		// No locale set: English, the same on every host.
+		expect(t.toRelative({ base })).toBe("3 days ago");
+		// An explicit locale still wins over the value's.
+		expect(t.setLocale("de").toRelative({ base, locale: "fr" })).toBe(
+			"il y a 3 jours",
+		);
+	});
 });
 
 describe("chronos > DateTime > fromObject validation", () => {
