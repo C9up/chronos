@@ -20,9 +20,8 @@ function defined<T>(value: T | null | undefined): T {
 describe("dateTimeAtlasAdapter", () => {
 	describe("consume (DB → model)", () => {
 		it("lifts an ISO 8601 string into a DateTime instance", () => {
-			// Chronos canonicalizes `.000Z` → `Z` (utils.ts:normalizeIso) — input
-			// with `.000Z` round-trips to the compact form. This is the project-
-			// wide ISO contract, not adapter behavior.
+			// toISO always writes the milliseconds, `.000` included (the engine's
+			// to_iso). This is the project-wide ISO contract, not adapter behavior.
 			const dt = dateTimeAtlasAdapter.consume("2026-04-30T12:00:00.000Z");
 			expect(dt).toBeInstanceOf(DateTime);
 			expect(dt?.toISO()).toBe("2026-04-30T12:00:00.000Z");

@@ -17,7 +17,6 @@ import {
 } from "./Duration.js";
 import { formatLuxon } from "./format.js";
 import { nativeChronos } from "./native.js";
-import { normalizeIso } from "./utils.js";
 
 export type DateUnit =
 	| "second"
@@ -244,14 +243,14 @@ function parseIso(raw: string, zone: string): string {
 function toIso(value: DateInput, zone = "UTC"): string {
 	if (value instanceof DateTime) return value.toISO();
 	if (value instanceof Date) {
-		return normalizeIso(isoOfMs(value.getTime(), () => "(JS Date)"));
+		return isoOfMs(value.getTime(), () => "(JS Date)");
 	}
 	if (typeof value !== "string") {
 		throw new TypeError(
 			`Invalid date input: expected a string, a Date or a DateTime, got ${typeof value}`,
 		);
 	}
-	return normalizeIso(parseIso(value, zone));
+	return parseIso(value, zone);
 }
 
 function toMs(value: DateInput): number {
