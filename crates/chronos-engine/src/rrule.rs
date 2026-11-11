@@ -32,8 +32,9 @@ pub const MAX_RULE_LEN: usize = 8 * 1024;
 /// Most occurrences one call returns.
 pub const MAX_OCCURRENCES: usize = 10_000;
 /// Iteration steps allowed per call (periods for YEARLY/MONTHLY/WEEKLY, lattice
-/// points for DAILY and finer). Measured at a few tens of milliseconds; a rule
-/// that needs more almost never meets its BY* parts.
+/// points for DAILY and finer). Reaching it takes about 70 ms in a release
+/// build (the rule in `a_rule_that_never_meets_its_lattice_stops_at_the_step_budget`);
+/// a rule that needs more almost never meets its BY* parts.
 const STEP_BUDGET: u64 = 3_000_000;
 const SECONDS_PER_DAY: i64 = 86_400;
 
@@ -1408,6 +1409,32 @@ mod tests {
             let err = run("2026-01-01T00:00:00Z", rule, 1).unwrap_err();
             assert!(err.contains("Unknown RRULE property"), "{}: {}", rule, err);
         }
+    }
+
+    #[test]
+    fn a_rule_that_never_meets_its_lattice_stops_at_the_step_budget() {
+        // INTERVAL=7063 s (7 x 1009) is coprime with a day, so every second of
+        // the day is reachable and `time_reachable` lets the rule through. But
+        // 86400 = -1 (mod 7), so the lattice can only land on 00:00:00 on one
+        // weekday out of seven — the Wednesday, from this DTSTART — and BYDAY
+        // leaves exactly that one out. Nothing ever matches, every passing day
+        // costs a few steps, and the day mask never comes up empty, so neither
+        // the empty-year skip nor year 9999 ends it before the budget.
+        let started = Instant::now();
+        let err = run(
+            "2026-01-01T00:00:01Z",
+            "FREQ=SECONDLY;INTERVAL=7063;BYDAY=MO,TU,TH,FR,SA,SU;BYHOUR=0;BYMINUTE=0;BYSECOND=0",
+            1,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains(&format!("stopped after {} steps", STEP_BUDGET)),
+            "{}",
+            err
+        );
+        // About 70 ms in a release build, 0.6 s in this debug one; without the
+        // budget the same call walks on to year 9999.
+        assert!(started.elapsed().as_secs() < 5, "{:?}", started.elapsed());
     }
 
     #[test]

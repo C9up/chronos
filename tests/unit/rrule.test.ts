@@ -816,6 +816,20 @@ describe("expandRRule — bounded work on hostile rules", () => {
 		},
 	);
 
+	it("stops a rule whose lattice never meets its BY* parts at the step budget", () => {
+		// INTERVAL=7063 s is coprime with a day, so every second of the day is
+		// reachable, but 00:00:00 only ever falls on the Wednesday this DTSTART
+		// leads to, and BYDAY leaves Wednesday out: every other day is walked,
+		// none matches, and only the budget ends the call before year 9999.
+		const rule =
+			"FREQ=SECONDLY;INTERVAL=7063;BYDAY=MO,TU,TH,FR,SA,SU;BYHOUR=0;BYMINUTE=0;BYSECOND=0";
+		const started = performance.now();
+		expect(() => expandRRule("2026-01-01T00:00:01Z", rule, 1)).toThrow(
+			/stopped after 3000000 steps without completing/,
+		);
+		expect(performance.now() - started).toBeLessThan(1000);
+	});
+
 	it("does not slow down with the length of the BYDAY list", () => {
 		// The probe from the report: each repeated entry used to cost a scan of
 		// 200 000 periods (1.5 s apiece).
