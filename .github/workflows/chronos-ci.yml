@@ -190,6 +190,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # Clippy as an error rather than a note, in a job the publish waits for
+      # and that runs on every push: the formatting was gated while nothing
+      # gated the lints that catch a panic on hostile input.
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
 
   # vitest on the host platform, on every push. The matrix above runs the
