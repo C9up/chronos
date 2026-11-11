@@ -1,10 +1,11 @@
 /**
- * Type stub for the WASM module emitted by `wasm-pack build` during the
- * chronos release pipeline. The actual `.js` + `.wasm` artifacts are not
+ * Type stub for the WASM module `pnpm build:wasm` (cargo + the wasm-bindgen
+ * CLI pinned to Cargo.lock) emits in the chronos release pipeline. The actual
+ * `.js` + `.wasm` artifacts are not
  * checked into the source tree; they live alongside this `.d.ts` at
  * publish time so the browser/edge fallback path in `src/native.ts`
  * resolves at runtime. The stub lets `tsc --noEmit` typecheck during
- * development without forcing every contributor to run `wasm-pack`.
+ * development without forcing every contributor to build the wasm.
  *
  * Signature mirrors the wasm-bindgen-generated `chronos_engine_wasm.js`,
  * preserving Rust snake_case names that `src/native.ts` adapts to the
