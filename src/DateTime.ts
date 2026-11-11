@@ -579,6 +579,13 @@ export class DateTime {
 		return new DateTime(new Date(ms));
 	}
 	static fromSeconds(seconds: number): DateTime {
+		// Same guard as fromMillis: `seconds * 1000` would turn "12" into 12 s
+		// and null into the epoch.
+		if (typeof seconds !== "number") {
+			throw new TypeError(
+				`fromSeconds expects a number, got ${seconds === null ? "null" : typeof seconds}`,
+			);
+		}
 		return new DateTime(new Date(seconds * 1000));
 	}
 	static fromUnix(seconds: number): DateTime {

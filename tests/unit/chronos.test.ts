@@ -282,6 +282,25 @@ describe("chronos > static factories (36.6)", () => {
 		expect(dt.toISO()).toContain("2025");
 	});
 
+	it.each([["12"], [true], [null], [undefined], [{}]])(
+		"fromSeconds and fromUnix refuse the non-number %j instead of coercing it",
+		(input) => {
+			expect(() =>
+				Reflect.apply(DateTime.fromSeconds, DateTime, [input]),
+			).toThrow(TypeError);
+			expect(() => Reflect.apply(DateTime.fromUnix, DateTime, [input])).toThrow(
+				TypeError,
+			);
+		},
+	);
+
+	it("fromSeconds refuses a non-finite number", () => {
+		expect(() => DateTime.fromSeconds(Number.NaN)).toThrow(RangeError);
+		expect(() => DateTime.fromSeconds(Number.POSITIVE_INFINITY)).toThrow(
+			RangeError,
+		);
+	});
+
 	it("fromJSDate rejects invalid Date", () => {
 		expect(() => DateTime.fromJSDate(new Date("not-a-date"))).toThrow(
 			/Invalid Date/,
