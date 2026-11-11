@@ -25,7 +25,8 @@ export interface RRuleBuild {
 	byMinute?: number[];
 	bySecond?: number[];
 	count?: number;
-	until?: string;
+	/** Last instant of the series: a strict ISO 8601 string (UTC when offset-less) or a DateTime. */
+	until?: string | DateTime;
 }
 
 const FREQUENCIES: ReadonlySet<string> = new Set([
@@ -91,6 +92,22 @@ function pushNumericList(
 	parts.push(`${key}=${checked.join(",")}`);
 }
 
+/**
+ * `until` goes through the same strict ISO 8601 door as every other date
+ * string: an offset-less value is UTC, and what V8's fallback parser would
+ * turn into a date (`"1"`, `"March 7"`) is refused instead of read in the
+ * host zone.
+ */
+function readUntil(value: unknown): DateTime {
+	if (value instanceof DateTime) return value;
+	if (typeof value !== "string") return invalid("until", value);
+	try {
+		return DateTime.from(value);
+	} catch (cause) {
+		throw new RangeError(`toRRuleString: invalid until ${value}`, { cause });
+	}
+}
+
 export function toRRuleString(rule: RRuleBuild): string {
 	if (!FREQUENCIES.has(rule.freq)) invalid("freq", rule.freq);
 	const parts: string[] = [`FREQ=${rule.freq}`];
@@ -140,13 +157,11 @@ export function toRRuleString(rule: RRuleBuild): string {
 	if (rule.count !== undefined)
 		parts.push(`COUNT=${checkInteger("count", rule.count, 0, 1_000_000_000)}`);
 	if (rule.until !== undefined) {
-		const ms =
-			typeof rule.until === "string" ? Date.parse(rule.until) : Number.NaN;
-		if (!Number.isFinite(ms)) invalid("until", rule.until);
 		// RFC 5545 §3.3.10 UNTIL format: YYYYMMDDTHHMMSSZ (no hyphens/colons/ms).
 		parts.push(
-			`UNTIL=${new Date(ms)
-				.toISOString()
+			`UNTIL=${readUntil(rule.until)
+				.toUTC()
+				.toISO()
 				.replace(/[-:]/g, "")
 				.replace(/\.\d+Z$/, "Z")}`,
 		);

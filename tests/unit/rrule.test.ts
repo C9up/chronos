@@ -847,9 +847,40 @@ describe("toRRuleString — runtime validation", () => {
 		[{ freq: "DAILY", byMonthDay: [0] }, /byMonthDay/],
 		[{ freq: "DAILY", bySetPos: ["1;COUNT=9"] }, /bySetPos/],
 		[{ freq: "DAILY", until: "not a date" }, /until/],
+		// What V8's fallback date parser turns into a date.
+		[{ freq: "DAILY", until: "1" }, /until/],
+		[{ freq: "DAILY", until: "foo 2026" }, /until/],
+		[{ freq: "DAILY", until: "March 7" }, /until/],
+		[{ freq: "DAILY", until: "2026-02-30" }, /until/],
+		[{ freq: "DAILY", until: 1_780_000_000_000 }, /until/],
+		[{ freq: "DAILY", until: null }, /until/],
 	])("refuses %j", (input, message) => {
 		expect(() => Reflect.apply(toRRuleString, undefined, [input])).toThrow(
 			message,
+		);
+	});
+
+	it("reads an offset-less until as UTC whatever the host zone", () => {
+		const host = process.env.TZ;
+		try {
+			for (const zone of ["Europe/Paris", "America/Los_Angeles", "UTC"]) {
+				process.env.TZ = zone;
+				expect(
+					toRRuleString({ freq: "DAILY", until: "2026-06-01T10:00:00" }),
+				).toBe("FREQ=DAILY;UNTIL=20260601T100000Z");
+			}
+		} finally {
+			if (host === undefined) delete process.env.TZ;
+			else process.env.TZ = host;
+		}
+	});
+
+	it("takes a DateTime until and writes its UTC instant", () => {
+		const until = DateTime.fromISO("2026-06-01T12:00:00", {
+			zone: "Europe/Paris",
+		});
+		expect(toRRuleString({ freq: "DAILY", until })).toBe(
+			"FREQ=DAILY;UNTIL=20260601T100000Z",
 		);
 	});
 
