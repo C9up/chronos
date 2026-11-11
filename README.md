@@ -46,7 +46,8 @@ host's zone).
 
 Read out as `toISO` · `toISODate` · `toISOTime` · `toSQL` · `toSQLDate` ·
 `toSQLTime` · `toZonedISO` · `toDate` · `toMillis` · `toSeconds` · `toFormat` ·
-`format` · `toLocaleString` · `toRelative`, compared with `equals` · `isBefore` ·
+`format` · `toLocaleString` · `toRelative` ("1 day ago") · `toRelativeCalendar`
+("yesterday"), compared with `equals` · `isBefore` ·
 `isAfter` · `isSameDay` · `hasSame` · `isWithin` (or `<`, `>`), and moved with
 `plus` · `minus` · `set` · `startOf` · `endOf` · `setZone` (`keepLocalTime`) ·
 `setLocale` · `toUTC`.

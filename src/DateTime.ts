@@ -294,6 +294,183 @@ const CALENDAR_UNITS: ReadonlySet<DurationUnit> = new Set([
 	"days",
 ]);
 
+/** A unit `toRelative` and `toRelativeCalendar` can count in. */
+export type RelativeUnit =
+	| "years"
+	| "months"
+	| "weeks"
+	| "days"
+	| "hours"
+	| "minutes"
+	| "seconds";
+export type RelativeUnitLike =
+	| RelativeUnit
+	| "year"
+	| "month"
+	| "week"
+	| "day"
+	| "hour"
+	| "minute"
+	| "second";
+export type RelativeRounding = "trunc" | "expand" | "round" | "floor" | "ceil";
+
+interface RelativeFormatOptions {
+	/** Compared against; now, in this value's zone, by default. */
+	base?: DateInput;
+	/** Overrides this value's locale. */
+	locale?: Intl.LocalesArgument;
+	style?: Intl.RelativeTimeFormatStyle;
+	/** Reaches the formatter; the engine may not honour it. */
+	numberingSystem?: string;
+}
+
+export interface ToRelativeOptions extends RelativeFormatOptions {
+	/** One unit, or the units to pick the largest non-zero one from. */
+	unit?: RelativeUnitLike | readonly RelativeUnitLike[];
+	/** Round the count (default), or keep two decimals. */
+	round?: boolean;
+	/** How the count is rounded; toward zero by default. */
+	rounding?: RelativeRounding;
+	/** Milliseconds added away from the base before counting. */
+	padding?: number;
+}
+
+export interface ToRelativeCalendarOptions extends RelativeFormatOptions {
+	unit?: RelativeUnitLike;
+}
+
+const RELATIVE_UNITS: readonly RelativeUnit[] = [
+	"years",
+	"months",
+	"weeks",
+	"days",
+	"hours",
+	"minutes",
+	"seconds",
+];
+const TO_RELATIVE_UNITS: readonly RelativeUnit[] = [
+	"years",
+	"months",
+	"days",
+	"hours",
+	"minutes",
+	"seconds",
+];
+const TO_RELATIVE_CALENDAR_UNITS: readonly RelativeUnit[] = [
+	"years",
+	"months",
+	"days",
+];
+const BOUND_OF: Readonly<Record<RelativeUnit, BoundUnit>> = {
+	years: "year",
+	months: "month",
+	weeks: "week",
+	days: "day",
+	hours: "hour",
+	minutes: "minute",
+	seconds: "second",
+};
+
+function relativeUnitOf(unit: unknown): RelativeUnit {
+	const plural =
+		typeof unit === "string" && !unit.endsWith("s") ? `${unit}s` : unit;
+	const found = RELATIVE_UNITS.find((u) => u === plural);
+	if (found === undefined) {
+		throw new RangeError(`Unsupported relative unit: ${String(unit)}`);
+	}
+	return found;
+}
+
+/** Round to `digits` decimals the way the reference library's `roundTo` does. */
+function roundTo(value: number, digits: number, rounding: unknown): number {
+	const factor = 10 ** digits;
+	switch (rounding) {
+		case "expand":
+			return value > 0
+				? Math.ceil(value * factor) / factor
+				: Math.floor(value * factor) / factor;
+		case "trunc":
+			return Math.trunc(value * factor) / factor;
+		case "round":
+			return Math.round(value * factor) / factor;
+		case "floor":
+			return Math.floor(value * factor) / factor;
+		case "ceil":
+			return Math.ceil(value * factor) / factor;
+		default:
+			throw new RangeError(
+				`Value rounding ${String(rounding)} is out of range`,
+			);
+	}
+}
+
+/**
+ * The reference library's `diffRelative`: count `end - start` in the first
+ * unit (largest first) that reaches 1, or in the one unit asked for.
+ * `calendary` counts calendar boundaries crossed (yesterday is 1 day back at
+ * 23:59 as at 00:01) and rounds to the nearest; otherwise the count is the
+ * calendar-aware diff, truncated unless `rounding` says otherwise.
+ */
+function diffRelative(
+	start: DateTime,
+	end: DateTime,
+	opts: RelativeFormatOptions & {
+		units: readonly RelativeUnit[];
+		unit: RelativeUnit | undefined;
+		calendary: boolean;
+		numeric: "always" | "auto";
+		round?: boolean;
+		rounding?: RelativeRounding;
+	},
+): string {
+	const round = opts.round ?? true;
+	const rounding = opts.rounding ?? "trunc";
+	// NAMED DEVIATION: the reference library prints English (en, en-US) from a
+	// hand-written table and every other locale through Intl. Every locale goes
+	// through Intl here, so en-US gets CLDR's own short and narrow forms
+	// ("2d ago" in narrow, where the table prints "2 days ago"); the long style,
+	// the default, reads the same.
+	const intlOptions: Intl.RelativeTimeFormatOptions & {
+		numberingSystem?: string;
+	} = {
+		numeric: opts.numeric,
+		style: opts.style ?? "long",
+	};
+	if (opts.numberingSystem !== undefined) {
+		intlOptions.numberingSystem = opts.numberingSystem;
+	}
+	const formatter = new Intl.RelativeTimeFormat(
+		opts.locale ?? end.locale,
+		intlOptions,
+	);
+	const format = (count: number, unit: RelativeUnit): string =>
+		formatter.format(
+			roundTo(
+				count,
+				round || opts.calendary ? 0 : 2,
+				opts.calendary ? "round" : rounding,
+			),
+			unit,
+		);
+	const differ = (unit: RelativeUnit): number => {
+		if (opts.calendary) {
+			const bound = BOUND_OF[unit];
+			if (end.hasSame(start, bound)) return 0;
+			return end.startOf(bound).diff(start.startOf(bound), unit).as(unit);
+		}
+		return end.diff(start, unit).as(unit);
+	};
+
+	if (opts.unit !== undefined) return format(differ(opts.unit), opts.unit);
+	for (const unit of opts.units) {
+		const count = differ(unit);
+		if (Math.abs(count) >= 1) return format(count, unit);
+	}
+	const last = opts.units.at(-1);
+	if (last === undefined) throw new RangeError("No unit to count in");
+	return format(start.toMillis() > end.toMillis() ? -0 : 0, last);
+}
+
 function durationUnitOf(unit: string): DurationUnit {
 	const plural = unit.endsWith("s") ? unit : `${unit}s`;
 	const found = DIFF_ORDER.find((u) => u === plural);
@@ -1098,39 +1275,57 @@ export class DateTime {
 		}).format(this.toDate());
 	}
 
-	toRelative(options?: {
-		base?: DateInput;
-		locale?: Intl.LocalesArgument;
-	}): string {
-		const base = options?.base ? DateTime.from(options.base) : new DateTime();
-		const diffMs = this.toMillis() - base.toMillis();
-		const abs = Math.abs(diffMs);
-		let unit: Intl.RelativeTimeFormatUnit;
-		let value: number;
-		if (abs < 60_000) {
-			unit = "second";
-			value = Math.round(diffMs / 1000);
-		} else if (abs < 3_600_000) {
-			unit = "minute";
-			value = Math.round(diffMs / 60_000);
-		} else if (abs < 86_400_000) {
-			unit = "hour";
-			value = Math.round(diffMs / 3_600_000);
-		} else if (abs < 2_592_000_000) {
-			unit = "day";
-			value = Math.round(diffMs / 86_400_000);
-		} else if (abs < 31_536_000_000) {
-			unit = "month";
-			value = Math.round(diffMs / 2_592_000_000);
-		} else {
-			unit = "year";
-			value = Math.round(diffMs / 31_536_000_000);
+	/**
+	 * This value relative to `base` (now by default), as Luxon's `toRelative`:
+	 * "in 1 day", "48 hours ago". The count is the calendar-aware diff in the
+	 * largest unit that reaches 1, truncated toward zero, always as a number
+	 * ("1 day ago", never "yesterday": that is {@link toRelativeCalendar}).
+	 * Formatted in this value's locale unless `locale` is given.
+	 *
+	 * NAMED DEVIATION: no `quarters` unit, as chronos's Duration has none.
+	 */
+	toRelative(options: ToRelativeOptions = {}): string {
+		const base =
+			options.base === undefined
+				? DateTime.now(this.#zone)
+				: DateTime.from(options.base);
+		const padding = options.padding
+			? this.toMillis() < base.toMillis()
+				? -options.padding
+				: options.padding
+			: 0;
+		let units = TO_RELATIVE_UNITS;
+		let unit: RelativeUnit | undefined;
+		if (Array.isArray(options.unit)) {
+			units = options.unit.map(relativeUnitOf);
+		} else if (options.unit !== undefined) {
+			unit = relativeUnitOf(options.unit);
 		}
-		// The value's own locale unless one is given: left undefined, Intl falls
-		// back to the host's and the same value prints differently per machine.
-		return new Intl.RelativeTimeFormat(options?.locale ?? this.#locale, {
+		return diffRelative(
+			base,
+			padding === 0 ? this : this.plus({ milliseconds: padding }),
+			{ ...options, numeric: "always", units, unit, calendary: false },
+		);
+	}
+
+	/**
+	 * This value relative to `base`'s calendar, as Luxon's
+	 * `toRelativeCalendar`: "yesterday", "next month", "3 days ago". Counts the
+	 * calendar boundaries crossed in years, months, then days, or in `unit`.
+	 */
+	toRelativeCalendar(options: ToRelativeCalendarOptions = {}): string {
+		const base =
+			options.base === undefined
+				? DateTime.now(this.#zone)
+				: DateTime.from(options.base);
+		return diffRelative(base, this, {
+			...options,
 			numeric: "auto",
-		}).format(value, unit);
+			units: TO_RELATIVE_CALENDAR_UNITS,
+			unit:
+				options.unit === undefined ? undefined : relativeUnitOf(options.unit),
+			calendary: true,
+		});
 	}
 
 	// ─── Calendar accessors ─────────────────────────────────

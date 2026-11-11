@@ -245,6 +245,173 @@ describe("chronos > DateTime > toRelative", () => {
 			"il y a 3 jours",
 		);
 	});
+
+	// Expected strings produced by the reference library's own toRelative on
+	// the same instants (default locale en-US).
+	const base = new DateTime("2026-06-15T12:00:00Z");
+	const at = (iso: string) => new DateTime(iso);
+	it.each<[string, () => string, string]>([
+		[
+			"a day back is counted, not named",
+			() => at("2026-06-14T12:00:00Z").toRelative({ base }),
+			"1 day ago",
+		],
+		[
+			"a day ahead is counted, not named",
+			() => at("2026-06-16T12:00:00Z").toRelative({ base }),
+			"in 1 day",
+		],
+		[
+			"round: false keeps two decimals",
+			() => at("2026-06-14T00:00:00Z").toRelative({ base, round: false }),
+			"1.5 days ago",
+		],
+		[
+			"unit picks the unit",
+			() => at("2026-06-13T12:00:00Z").toRelative({ base, unit: "hours" }),
+			"48 hours ago",
+		],
+		[
+			"months are calendar months",
+			() =>
+				at("2026-03-01T00:00:00Z").toRelative({
+					base: at("2026-01-31T00:00:00Z"),
+				}),
+			"in 1 month",
+		],
+		[
+			"a year minus a day is 11 months",
+			() => at("2027-06-14T12:00:00Z").toRelative({ base }),
+			"in 11 months",
+		],
+		[
+			"counts are truncated",
+			() => at("2026-06-15T12:00:59.900Z").toRelative({ base }),
+			"in 59 seconds",
+		],
+		[
+			"padding rounds up inside the threshold",
+			() => at("2026-06-15T12:00:59.900Z").toRelative({ base, padding: 1000 }),
+			"in 1 minute",
+		],
+		[
+			"rounding: expand",
+			() => at("2026-06-15T10:30:00Z").toRelative({ base, rounding: "expand" }),
+			"2 hours ago",
+		],
+		[
+			"rounding with round: false",
+			() =>
+				at("2026-06-15T10:30:00Z").toRelative({
+					base,
+					rounding: "round",
+					round: false,
+				}),
+			"1.5 hours ago",
+		],
+		[
+			"an array of units picks among them",
+			() =>
+				at("2026-06-15T10:30:00Z").toRelative({
+					base,
+					unit: ["minutes", "seconds"],
+				}),
+			"90 minutes ago",
+		],
+		[
+			"style and locale reach the formatter",
+			() =>
+				at("2026-06-18T12:00:00Z").toRelative({
+					base,
+					style: "short",
+					locale: "fr",
+				}),
+			new Intl.RelativeTimeFormat("fr", { style: "short" }).format(3, "days"),
+		],
+		[
+			"under a second in the past",
+			() => at("2026-06-15T11:59:59.500Z").toRelative({ base }),
+			"0 seconds ago",
+		],
+		[
+			"under a second in the future",
+			() => at("2026-06-15T12:00:00.500Z").toRelative({ base }),
+			"in 0 seconds",
+		],
+		[
+			"weeks on request",
+			() => at("2026-07-05T12:00:00Z").toRelative({ base, unit: "weeks" }),
+			"in 2 weeks",
+		],
+		[
+			"a day across a DST change is one day",
+			() =>
+				new DateTime("2026-03-29T10:00:00Z", "Europe/Paris").toRelative({
+					base: new DateTime("2026-03-28T11:00:00Z", "Europe/Paris"),
+				}),
+			"in 1 day",
+		],
+	])("toRelative: %s", (_, run, expected) => {
+		expect(run()).toBe(expected);
+	});
+
+	it.each<[string, () => string, string]>([
+		[
+			"yesterday",
+			() => at("2026-06-14T12:00:00Z").toRelativeCalendar({ base }),
+			"yesterday",
+		],
+		[
+			"tomorrow, 13 hours ahead",
+			() => at("2026-06-16T01:00:00Z").toRelativeCalendar({ base }),
+			"tomorrow",
+		],
+		[
+			"today, 11 hours ahead",
+			() => at("2026-06-15T23:00:00Z").toRelativeCalendar({ base }),
+			"today",
+		],
+		[
+			"next month, 16 days ahead",
+			() => at("2026-07-01T00:00:00Z").toRelativeCalendar({ base }),
+			"next month",
+		],
+		[
+			"counted days",
+			() => at("2026-06-12T12:00:00Z").toRelativeCalendar({ base }),
+			"3 days ago",
+		],
+		[
+			"weeks on request",
+			() =>
+				at("2026-06-23T00:00:00Z").toRelativeCalendar({ base, unit: "weeks" }),
+			"next week",
+		],
+		[
+			"last year, 200 days back",
+			() => at("2025-11-27T00:00:00Z").toRelativeCalendar({ base }),
+			"last year",
+		],
+		[
+			"in another locale",
+			() =>
+				at("2026-06-14T12:00:00Z").toRelativeCalendar({ base, locale: "fr" }),
+			"hier",
+		],
+	])("toRelativeCalendar: %s", (_, run, expected) => {
+		expect(run()).toBe(expected);
+	});
+
+	it("refuses an unknown unit or rounding", () => {
+		const t = at("2026-06-14T12:00:00Z");
+		// Through Reflect: what an untyped caller can send.
+		expect(() =>
+			Reflect.apply(t.toRelative, t, [{ base, rounding: "sideways" }]),
+		).toThrow(RangeError);
+		expect(() =>
+			Reflect.apply(t.toRelative, t, [{ base, unit: "fortnights" }]),
+		).toThrow(RangeError);
+	});
 });
 
 describe("chronos > DateTime > fromObject validation", () => {

@@ -11,6 +11,11 @@ export type {
 	DateUnit,
 	RangeCompareOptions,
 	RangeRelation,
+	RelativeRounding,
+	RelativeUnit,
+	RelativeUnitLike,
+	ToRelativeCalendarOptions,
+	ToRelativeOptions,
 } from "./DateTime.js";
 export {
 	analyzeRange,
