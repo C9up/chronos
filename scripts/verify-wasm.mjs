@@ -78,6 +78,19 @@ expectEqual(
   wasm.rrule_expand('2026-01-15T10:00:00Z', 'FREQ=DAILY;COUNT=2', 10, undefined),
   ['2026-01-15T10:00:00.000Z', '2026-01-16T10:00:00.000Z'],
 )
+// Hostile input comes back as an error, never a trap: the browser build has no
+// catch_unwind, so a panic in the engine kills the module instead.
+{
+  let thrown
+  try {
+    wasm.rrule_expand('2026-01-15T10:00:00Z', 'ABCDEFGé=1', 1, undefined)
+  } catch (e) {
+    thrown = e
+  }
+  if (typeof thrown !== 'string' || !thrown.includes('Unknown RRULE property')) {
+    throw new Error(`${TAG} hostile RRULE smoke test failed: got ${String(thrown)}`)
+  }
+}
 
 // Present on disk is NOT the same question as present in the package, and it is
 // the weaker one. npm honours a .gitignore nested inside a published directory

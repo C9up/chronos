@@ -255,7 +255,12 @@ fn parse_text(text: &str) -> Result<(RawRule, Option<DtStartLine>), String> {
                     name
                 ))
             }
-            None if line.len() >= 8 && line[..8].eq_ignore_ascii_case("DTSTART=") => {
+            // `get` rather than `[..8]`: byte 8 of hostile text can sit inside
+            // a multi-byte character, where a slice panics.
+            None if line
+                .get(..8)
+                .is_some_and(|head| head.eq_ignore_ascii_case("DTSTART=")) =>
+            {
                 if dtstart.is_some() {
                     return Err("DTSTART appears twice".to_string());
                 }
@@ -1393,6 +1398,16 @@ mod tests {
         let rule = format!("FREQ=DAILY;BYHOUR={}", vec!["1"; 5000].join(","));
         let err = run("2026-01-01T00:00:00Z", &rule, 1).unwrap_err();
         assert!(err.contains("limit is 8192 bytes"), "{}", err);
+    }
+
+    #[test]
+    fn a_multi_byte_character_across_byte_8_is_an_ordinary_error() {
+        // 7 ASCII bytes then `é` (bytes 7..9): the DTSTART= check used to
+        // slice at byte 8, inside the character, and panic.
+        for rule in ["ABCDEFGé=1", "DTSTARé=20260101", "ABCDEFGé=1\nFREQ=DAILY"] {
+            let err = run("2026-01-01T00:00:00Z", rule, 1).unwrap_err();
+            assert!(err.contains("Unknown RRULE property"), "{}: {}", rule, err);
+        }
     }
 
     #[test]

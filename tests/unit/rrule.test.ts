@@ -747,6 +747,14 @@ describe("expandRRule — UNTIL and parsing", () => {
 			/Invalid BYHOUR/,
 		);
 	});
+
+	it("refuses a multi-byte character across byte 8 like any unknown property, without a panic", () => {
+		const start = "2026-01-15T10:00:00Z";
+		// 7 ASCII bytes then `é`: byte 8 sits inside the character.
+		expect(() => expandRRule(start, "ABCDEFGé=1")).toThrow(
+			/Unknown RRULE property 'ABCDEFGé'/,
+		);
+	});
 });
 
 describe("expandRRule — bounded work on hostile rules", () => {
