@@ -20,3 +20,5 @@ wasm/*.js
 wasm/*.wasm
 wasm/*_bg.*
 *.tgz
+# Workstream: the maintainer's local tracking, never published
+.workstream/
