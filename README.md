@@ -40,9 +40,22 @@ d > DateTime.from('2026-01-01')             // true — valueOf is the epoch ms
 Built from whatever you have:
 `from` · `now` · `local` · `utc` · `fromISO` · `fromMillis` · `fromSeconds` ·
 `fromUnix` · `fromJSDate` · `fromObject` · `fromRFC2822` · `fromSQL` ·
-`fromHTTP`. `fromISO`, `fromObject` and `fromSQL` take `{ zone }`: a time
-without an offset is then a wall clock in that zone (UTC otherwise — never the
-host's zone).
+`fromHTTP` · `fromFormat`. `fromISO`, `fromObject`, `fromSQL` and
+`fromFormat` take `{ zone }`: a time without an offset is then a wall clock in
+that zone (UTC otherwise — never the host's zone).
+
+`fromFormat` reads the tokens `toFormat` writes, names in `{ locale }` (en-US
+by default); units the format leaves out come from now for the larger ones and
+start at their minimum for the smaller ones:
+
+```ts
+DateTime.fromFormat('10/08/2026 09:30', 'dd/MM/yyyy HH:mm', { zone: 'Europe/Paris' })
+DateTime.fromFormat('10 août 2026', 'd MMMM yyyy', { locale: 'fr' })
+DateTime.fromFormat('14:30', 'HH:mm')   // today at 14:30 UTC
+```
+
+Text that does not match the format, or names a date that does not exist,
+throws.
 
 Read out as `toISO` · `toISODate` · `toISOTime` · `toSQL` · `toSQLDate` ·
 `toSQLTime` · `toZonedISO` · `toDate` · `toMillis` · `toSeconds` · `toFormat` ·

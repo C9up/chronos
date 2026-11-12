@@ -36,7 +36,7 @@ export interface FormatContext {
 	allowZ?: boolean;
 }
 
-const MONTHS_LONG = [
+export const MONTHS_LONG = [
 	"January",
 	"February",
 	"March",
@@ -50,7 +50,7 @@ const MONTHS_LONG = [
 	"November",
 	"December",
 ];
-const WEEKDAYS_LONG = [
+export const WEEKDAYS_LONG = [
 	"Monday",
 	"Tuesday",
 	"Wednesday",
@@ -62,7 +62,7 @@ const WEEKDAYS_LONG = [
 
 type NameLength = "short" | "long" | "narrow";
 
-const MACROS: Readonly<Record<string, Intl.DateTimeFormatOptions>> = {
+export const MACROS: Readonly<Record<string, Intl.DateTimeFormatOptions>> = {
 	D: { year: "numeric", month: "numeric", day: "numeric" },
 	DD: { year: "numeric", month: "short", day: "numeric" },
 	DDD: { year: "numeric", month: "long", day: "numeric" },
@@ -170,13 +170,13 @@ const MACROS: Readonly<Record<string, Intl.DateTimeFormatOptions>> = {
 	},
 };
 
-interface Token {
+export interface Token {
 	literal: boolean;
 	val: string;
 }
 
 /** Luxon's `Formatter.parseFormat`: runs of one letter are a token, `'…'` is literal. */
-function parseFormat(fmt: string): Token[] {
+export function parseFormat(fmt: string): Token[] {
 	let current: string | null = null;
 	let currentFull = "";
 	let bracketed = false;
@@ -238,7 +238,7 @@ function formatOffset(
 	}
 }
 
-function isEnglish(locale: string): boolean {
+export function isEnglish(locale: string): boolean {
 	return /^en(?:-|$)/i.test(locale);
 }
 

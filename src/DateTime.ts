@@ -17,6 +17,21 @@ import {
 } from "./Duration.js";
 import { formatLuxon } from "./format.js";
 import { nativeChronos } from "./native.js";
+import {
+	type CalendarDay,
+	dayOfMs,
+	daysInYearOf,
+	dayToIsoWeek,
+	dayToOrdinal,
+	isoWeekday,
+	isoWeeksInYear,
+	isoWeekToDay,
+	ordinalToDay,
+	type ParsedFields,
+	type ParsedText,
+	parseWithFormat,
+	utcDayMs,
+} from "./parse.js";
 
 export type DateUnit =
 	| "second"
@@ -201,6 +216,151 @@ function isoOfMs(ms: number, input: () => string): string {
 		);
 	}
 	return new Date(ms).toISOString();
+}
+
+/**
+ * Fill the units a `fromFormat` text left out, as Luxon's `fromObject` does:
+ * the units larger than the largest one written come from `now`, the smaller
+ * ones take their minimum. A text naming a week (`kkkk`, `W`) or only a
+ * weekday is read on the ISO week calendar, one naming an ordinal (`o`) on the
+ * ordinal calendar. Every unit is range-checked; hour 24 is accepted at
+ * 24:00:00.000 and is midnight of the next day, as Luxon reads it.
+ */
+function resolveParsedFields(
+	f: ParsedFields,
+	now: WallClock,
+	raw: string,
+): WallClock {
+	const hasOrdinal = f.ordinal !== undefined;
+	const hasMonthDay = f.month !== undefined || f.day !== undefined;
+	const hasGregorian = f.year !== undefined || hasMonthDay;
+	const weekDefined = f.weekYear !== undefined || f.weekNumber !== undefined;
+	if ((hasGregorian || hasOrdinal) && weekDefined) {
+		throw new Error(
+			"Can't mix weekYear/weekNumber units with year/month/day or ordinals",
+		);
+	}
+	if (hasMonthDay && hasOrdinal) {
+		throw new Error("Can't mix ordinal dates with month/day");
+	}
+	let found = false;
+	const take = (given: number | undefined, current: number, min: number) => {
+		if (given !== undefined) {
+			found = true;
+			return given;
+		}
+		return found ? min : current;
+	};
+	const range = (unit: string, value: number, min: number, max: number) => {
+		if (!Number.isInteger(value) || value < min || value > max) {
+			throw new RangeError(
+				`Invalid date '${raw}': ${unit} ${String(value)} is out of range (${min}-${max}).`,
+			);
+		}
+	};
+	const nowDay: CalendarDay = {
+		year: now.year,
+		month: now.month,
+		day: now.day,
+	};
+	let day: CalendarDay;
+	if (weekDefined || (f.weekday !== undefined && !hasGregorian)) {
+		const nowWeek = dayToIsoWeek(nowDay);
+		const weekYear = take(f.weekYear, nowWeek.weekYear, 1);
+		const weekNumber = take(f.weekNumber, nowWeek.weekNumber, 1);
+		const weekday = take(f.weekday, nowWeek.weekday, 1);
+		range("weekYear", weekYear, 0, 9999);
+		range("weekNumber", weekNumber, 1, isoWeeksInYear(weekYear));
+		range("weekday", weekday, 1, 7);
+		day = isoWeekToDay(weekYear, weekNumber, weekday);
+	} else if (hasOrdinal) {
+		const year = take(f.year, now.year, 1);
+		const ordinal = take(f.ordinal, dayToOrdinal(nowDay), 1);
+		range("year", year, 0, 9999);
+		range("ordinal", ordinal, 1, daysInYearOf(year));
+		day = ordinalToDay(year, ordinal);
+	} else {
+		day = {
+			year: take(f.year, now.year, 1),
+			month: take(f.month, now.month, 1),
+			day: take(f.day, now.day, 1),
+		};
+	}
+	const clock: WallClock = {
+		...day,
+		hour: take(f.hour, now.hour, 0),
+		minute: take(f.minute, now.minute, 0),
+		second: take(f.second, now.second, 0),
+		millisecond: take(f.millisecond, now.millisecond, 0),
+	};
+	const endOfDay =
+		clock.hour === 24 &&
+		clock.minute === 0 &&
+		clock.second === 0 &&
+		clock.millisecond === 0;
+	assertWallClock(endOfDay ? { ...clock, hour: 0 } : clock, raw);
+	const out = endOfDay
+		? {
+				...clock,
+				...dayOfMs(utcDayMs(clock.year, clock.month, clock.day + 1)),
+				hour: 0,
+			}
+		: clock;
+	assertWallClock(out, raw);
+	if (
+		f.weekday !== undefined &&
+		hasGregorian &&
+		isoWeekday(out) !== f.weekday
+	) {
+		throw new RangeError(
+			`Invalid date '${raw}': weekday ${f.weekday} does not fall on ${pad(out.year, 4)}-${pad(out.month)}-${pad(out.day)}.`,
+		);
+	}
+	return out;
+}
+
+/** Now as a wall clock in `zone`, or at a fixed `offset` (minutes) when the text gave one. */
+function nowWallClock(zone: string, offset: number | undefined): WallClock {
+	if (offset === undefined) {
+		const { year, month, day, hour, minute, second, millisecond } =
+			DateTime.now(zone).calendar;
+		return { year, month, day, hour, minute, second, millisecond };
+	}
+	const d = new Date(Date.now() + offset * 60_000);
+	return {
+		year: d.getUTCFullYear(),
+		month: d.getUTCMonth() + 1,
+		day: d.getUTCDate(),
+		hour: d.getUTCHours(),
+		minute: d.getUTCMinutes(),
+		second: d.getUTCSeconds(),
+		millisecond: d.getUTCMilliseconds(),
+	};
+}
+
+/**
+ * The instant of a parsed wall clock. An offset alone fixes it. A zone and an
+ * offset together: the offset settles the hour a zone repeats when its clocks
+ * go back, as long as the zone has that offset then; otherwise the zone wins.
+ */
+function instantOfParsed(
+	c: WallClock,
+	parsed: ParsedText,
+	wallZone: string,
+): number {
+	if (parsed.offset !== undefined) {
+		const atOffset = utcMs(c) - parsed.offset * 60_000;
+		if (parsed.zone === undefined) return atOffset;
+		const zoneOffset =
+			parsed.zone === "UTC"
+				? 0
+				: nativeChronos().zoneOffset(
+						isoOfMs(atOffset, () => `'${parsed.zone}'`),
+						parsed.zone,
+					);
+		if (zoneOffset === parsed.offset) return atOffset;
+	}
+	return wallClockMs(c, wallZone);
 }
 
 /** Read an ISO 8601 string; an offset-less one is a wall clock in `zone`. */
@@ -834,6 +994,59 @@ export class DateTime {
 	}
 	static fromHTTP(input: string): DateTime {
 		return new DateTime(nativeChronos().parseHttp(input));
+	}
+
+	/**
+	 * Read `text` written with Luxon's format tokens (`dd/MM/yyyy HH:mm`,
+	 * `dd LLL yyyy 'at' h:mm a`, `kkkk-'W'WW-c`, macros such as `D` or `f`), as
+	 * Luxon's `fromFormat`. Units the format leaves out are filled as Luxon
+	 * fills them: larger ones from now, smaller ones with their minimum
+	 * (`HH:mm` is today at that time, `MMMM` the 1st of that month this year).
+	 *
+	 * The wall clock is read in the zone the text names (`z`), else at the
+	 * offset it writes (`Z`, `ZZ`, `ZZZ`), else in `options.zone` (UTC by
+	 * default); the result is in `options.zone`. Names are matched in
+	 * `options.locale` (en-US by default), which the result keeps.
+	 *
+	 * Two deviations, named: text that does not match the format, or names a
+	 * date that does not exist, throws instead of returning an invalid value
+	 * (chronos has no invalid DateTime); and there is no `setZone` option, since
+	 * a chronos zone is an IANA name and an offset alone names none.
+	 */
+	static fromFormat(
+		text: string,
+		format: string,
+		options: { zone?: string; locale?: string } = {},
+	): DateTime {
+		if (typeof text !== "string" || typeof format !== "string") {
+			throw new TypeError("fromFormat requires an input string and a format");
+		}
+		const zone = options.zone ?? "UTC";
+		assertZone(zone);
+		const locale = options.locale ?? "en-US";
+		const parsed = parseWithFormat(text, format, locale);
+		if (
+			parsed === null ||
+			(Object.keys(parsed.fields).length === 0 && parsed.zone === undefined)
+		) {
+			throw new RangeError(
+				`Invalid date '${text}': it does not match the format '${format}'.`,
+			);
+		}
+		if (parsed.zone !== undefined) assertZone(parsed.zone);
+		const wallZone = parsed.zone ?? zone;
+		const clock = resolveParsedFields(
+			parsed.fields,
+			nowWallClock(wallZone, parsed.offset),
+			text,
+		);
+		const ms = instantOfParsed(clock, parsed, wallZone);
+		const out = new DateTime(
+			isoOfMs(ms, () => `'${text}'`),
+			zone,
+		);
+		out.#locale = locale;
+		return out;
 	}
 
 	// ─── Timezone ───────────────────────────────────────────

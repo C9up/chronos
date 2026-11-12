@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DateTime, Duration, Interval } from "../../src/index.js";
 
 /**
@@ -345,5 +345,204 @@ describe("the atlas adapter stores one canonical instant", () => {
 		expect(dateTimeAtlasAdapter.prepare(paris)).toBe(
 			"2026-08-10T07:05:09.042Z",
 		);
+	});
+});
+
+/**
+ * `DateTime.fromFormat`, against what Luxon 3.7.2 answers for the same text,
+ * format and options with the clock at 2026-08-10T07:05:09.042Z (Monday):
+ * the instant in UTC and the zone of the result. Units a format leaves out
+ * come from that clock.
+ */
+const FROM_FORMAT: ReadonlyArray<
+	readonly [string, string, string, string, { zone?: string; locale?: string }?]
+> = [
+	["10/08/2026", "dd/MM/yyyy", "2026-08-10T00:00:00.000Z", "UTC"],
+	[
+		"2026-08-10 14:30:15.250",
+		"yyyy-MM-dd HH:mm:ss.SSS",
+		"2026-08-10T14:30:15.250Z",
+		"UTC",
+	],
+	[
+		"10 Aug 2026 at 7:05 PM",
+		"dd LLL yyyy 'at' h:mm a",
+		"2026-08-10T19:05:00.000Z",
+		"UTC",
+	],
+	["12:00 am", "hh:mm a", "2026-08-10T00:00:00.000Z", "UTC"],
+	["12:30 PM", "h:mm a", "2026-08-10T12:30:00.000Z", "UTC"],
+	[
+		"Monday, August 10, 2026",
+		"EEEE, MMMM d, yyyy",
+		"2026-08-10T00:00:00.000Z",
+		"UTC",
+	],
+	["mon aug 10 2026", "EEE MMM d yyyy", "2026-08-10T00:00:00.000Z", "UTC"],
+	[
+		"2026-08-10 09:00 +02:00",
+		"yyyy-MM-dd HH:mm ZZ",
+		"2026-08-10T07:00:00.000Z",
+		"UTC",
+	],
+	[
+		"2026-08-10 09:00 -0530",
+		"yyyy-MM-dd HH:mm ZZZ",
+		"2026-08-10T14:30:00.000Z",
+		"UTC",
+	],
+	[
+		"2026-08-10 09:00 +2",
+		"yyyy-MM-dd HH:mm Z",
+		"2026-08-10T07:00:00.000Z",
+		"UTC",
+	],
+	[
+		"2026-08-10 09:00 Europe/Paris",
+		"yyyy-MM-dd HH:mm z",
+		"2026-08-10T07:00:00.000Z",
+		"UTC",
+	],
+	[
+		"2026-10-25 02:30 +01:00 Europe/Paris",
+		"yyyy-MM-dd HH:mm ZZ z",
+		"2026-10-25T01:30:00.000Z",
+		"UTC",
+	],
+	[
+		"2026-10-25 02:30 +02:00 Europe/Paris",
+		"yyyy-MM-dd HH:mm ZZ z",
+		"2026-10-25T00:30:00.000Z",
+		"UTC",
+	],
+	["10/08/26", "dd/MM/yy", "2026-08-10T00:00:00.000Z", "UTC"],
+	["10/08/61", "dd/MM/yy", "1961-08-10T00:00:00.000Z", "UTC"],
+	["10/08/60", "dd/MM/yy", "2060-08-10T00:00:00.000Z", "UTC"],
+	["2026-222", "yyyy-ooo", "2026-08-10T00:00:00.000Z", "UTC"],
+	["2026-W33-1", "kkkk-'W'WW-c", "2026-08-10T00:00:00.000Z", "UTC"],
+	["2026 Q3", "yyyy 'Q'q", "2026-07-01T00:00:00.000Z", "UTC"],
+	["14:30", "HH:mm", "2026-08-10T14:30:00.000Z", "UTC"],
+	["August", "MMMM", "2026-08-01T00:00:00.000Z", "UTC"],
+	["Friday", "EEEE", "2026-08-14T00:00:00.000Z", "UTC"],
+	["2026", "yyyy", "2026-01-01T00:00:00.000Z", "UTC"],
+	["8/10/2026", "D", "2026-08-10T00:00:00.000Z", "UTC"],
+	["Aug 10, 2026", "DD", "2026-08-10T00:00:00.000Z", "UTC"],
+	["August 10, 2026", "DDD", "2026-08-10T00:00:00.000Z", "UTC"],
+	["8/10/2026, 7:05 PM", "f", "2026-08-10T19:05:00.000Z", "UTC"],
+	["8/10/2026, 7:05\u202fPM", "f", "2026-08-10T19:05:00.000Z", "UTC"],
+	["07:05", "T", "2026-08-10T07:05:00.000Z", "UTC"],
+	[
+		"2026-08-10 09:00:00.5",
+		"yyyy-MM-dd HH:mm:ss.u",
+		"2026-08-10T09:00:00.500Z",
+		"UTC",
+	],
+	[
+		"2026-08-10 09:00:00.42",
+		"yyyy-MM-dd HH:mm:ss.S",
+		"2026-08-10T09:00:00.042Z",
+		"UTC",
+	],
+	["2026 AD", "yyyy G", "2026-01-01T00:00:00.000Z", "UTC"],
+	[
+		"10 août 2026",
+		"d MMMM yyyy",
+		"2026-08-10T00:00:00.000Z",
+		"UTC",
+		{ locale: "fr" },
+	],
+	[
+		"lundi 10 août 2026",
+		"EEEE d MMMM yyyy",
+		"2026-08-10T00:00:00.000Z",
+		"UTC",
+		{ locale: "fr" },
+	],
+	[
+		"10 févr. 2026",
+		"d MMM yyyy",
+		"2026-02-10T00:00:00.000Z",
+		"UTC",
+		{ locale: "fr" },
+	],
+	[
+		"10/08/2026 09:00",
+		"dd/MM/yyyy HH:mm",
+		"2026-08-10T07:00:00.000Z",
+		"Europe/Paris",
+		{ zone: "Europe/Paris" },
+	],
+	[
+		"2026-08-10 09:00 +02:00",
+		"yyyy-MM-dd HH:mm ZZ",
+		"2026-08-10T07:00:00.000Z",
+		"America/New_York",
+		{ zone: "America/New_York" },
+	],
+	["24:00", "HH:mm", "2026-08-11T00:00:00.000Z", "UTC"],
+	["2026-W53-1", "kkkk-'W'WW-c", "2026-12-28T00:00:00.000Z", "UTC"],
+];
+
+describe("DateTime.fromFormat reads Luxon's tokens like Luxon", () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-08-10T07:05:09.042Z"));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	for (const [text, format, iso, zone, options] of FROM_FORMAT) {
+		it(`reads ${JSON.stringify(text)} as ${JSON.stringify(format)}`, () => {
+			const dt = DateTime.fromFormat(text, format, options);
+			expect(dt.toUTC().toISO()).toBe(iso);
+			expect(dt.zoneName).toBe(zone);
+		});
+	}
+
+	it("keeps the locale it read the names in", () => {
+		const dt = DateTime.fromFormat("10 août 2026", "d MMMM yyyy", {
+			locale: "fr",
+		});
+		expect(dt.toFormat("d MMMM yyyy")).toBe("10 août 2026");
+	});
+
+	it("reads back what toFormat wrote", () => {
+		const paris = DateTime.fromISO("2026-08-10T21:05:09.042", {
+			zone: "Europe/Paris",
+		});
+		const format = "EEEE dd LLL yyyy 'at' hh:mm:ss.SSS a ZZ";
+		const text = paris.toFormat(format);
+		expect(DateTime.fromFormat(text, format).toMillis()).toBe(paris.toMillis());
+	});
+
+	// Luxon returns an invalid DateTime for these; chronos refuses invalid
+	// input instead of building an invalid value, so each one throws.
+	it.each([
+		["Sept 3 2026", "MMM d yyyy", /does not match the format/],
+		["nope", "yyyy-MM-dd", /does not match the format/],
+		["2026-08-10", "yyyy-MM-dd HH", /does not match the format/],
+		["2026-08-10 x", "yyyy-MM-dd", /does not match the format/],
+		["2026-02-30", "yyyy-MM-dd", /no day 30/],
+		["2026-13-01", "yyyy-MM-dd", /no month 13/],
+		["2026-366", "yyyy-ooo", /ordinal 366 is out of range/],
+		["Tuesday 2026-08-10", "EEEE yyyy-MM-dd", /weekday 2 does not fall on/],
+		["2026-08-10 Not/AZone", "yyyy-MM-dd z", /Unknown IANA timezone/],
+	])("refuses %j as %j", (text, format, message) => {
+		expect(() => DateTime.fromFormat(text, format)).toThrow(message);
+	});
+
+	it("throws on the specifications Luxon throws on", () => {
+		expect(() => DateTime.fromFormat("1 PM 13", "h a H")).toThrow(
+			"Can't include meridiem when specifying 24-hour format",
+		);
+		expect(() =>
+			DateTime.fromFormat("2026-W33 2026-08-10", "kkkk-'W'WW yyyy-MM-dd"),
+		).toThrow(
+			"Can't mix weekYear/weekNumber units with year/month/day or ordinals",
+		);
+		expect(() =>
+			DateTime.fromFormat("2026-222 08-10", "yyyy-ooo MM-dd"),
+		).toThrow("Can't mix ordinal dates with month/day");
 	});
 });
