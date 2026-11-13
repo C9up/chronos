@@ -187,6 +187,25 @@ export interface ExpandRRuleOptions {
 	 * of a zoned `DateTime` start, else UTC.
 	 */
 	tzid?: string;
+	/**
+	 * Occurrences the series does not have (RFC 5545 EXDATE): each removes the
+	 * occurrence at that very instant, if there is one. COUNT still counts it.
+	 */
+	exdates?: readonly DateInput[];
+	/** Occurrences added to the series (RFC 5545 RDATE), outside COUNT and UNTIL. */
+	rdates?: readonly DateInput[];
+}
+
+/**
+ * The EXDATE and RDATE lines for instants, in UTC: appended to the rule text,
+ * they are expanded with it (at most 10 000 of them, the text 256 KiB).
+ */
+function dateLines(options: ExpandRRuleOptions): string {
+	const line = (property: string, dates: readonly DateInput[] | undefined) =>
+		dates === undefined || dates.length === 0
+			? ""
+			: `\n${property}:${dates.map((date) => DateTime.from(date).toUTC().format("YYYYMMDD[T]HHmmss[Z]")).join(",")}`;
+	return line("EXDATE", options.exdates) + line("RDATE", options.rdates);
 }
 
 function isRRuleBuild(value: unknown): value is RRuleBuild {
@@ -252,7 +271,12 @@ export function expandRRule(
 			typeof rruleOrOptions === "string"
 				? rruleOrOptions
 				: toRRuleString(rruleOrOptions);
-		return nativeChronos().rruleExpand(from.toISO(), rule, limit, tzid);
+		return nativeChronos().rruleExpand(
+			from.toISO(),
+			rule + dateLines(options),
+			limit,
+			tzid,
+		);
 	}
 	if (typeof start !== "string") {
 		throw new TypeError(
@@ -262,7 +286,7 @@ export function expandRRule(
 	const options = readOptions(rruleOrOptions);
 	return nativeChronos().rruleExpand(
 		undefined,
-		start,
+		start + dateLines(options),
 		checkLimit(options.limit ?? 100),
 		options.tzid,
 	);

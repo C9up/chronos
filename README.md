@@ -185,10 +185,36 @@ expandRRule('2026-03-23T08:00:00Z', 'FREQ=WEEKLY;COUNT=2', { tzid: 'Europe/Paris
 expandRRule('DTSTART;TZID=Europe/Paris:20260323T090000\nRRULE:FREQ=WEEKLY;COUNT=2')
 ```
 
-A rule from user input or an imported .ics is safe to expand: the text is
-capped at 8 KB, BY* lists are sets, at most 10 000 occurrences come back, and
-iteration ends at year 9999, so an unsatisfiable rule answers `[]` in
-milliseconds. Unknown properties and malformed parts are refused.
+### Exceptions: EXDATE and RDATE
+
+A series without some of its occurrences, or with a few more, as RFC 5545
+§3.8.5 sets it: the rule's occurrences and the RDATEs, without the EXDATEs.
+COUNT and UNTIL bound the rule alone — an EXDATE does not give its place back.
+
+```ts
+// A Monday slot, not on the 28th, once on Wednesday the 30th instead.
+expandRRule(
+  'DTSTART;TZID=Europe/Zurich:20261214T090000\n' +
+    'RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4\n' +
+    'EXDATE;TZID=Europe/Zurich:20261228T090000\n' +
+    'RDATE;TZID=Europe/Zurich:20261230T140000',
+)
+
+// The same, as options: instants or DateTimes.
+expandRRule(start, { freq: 'WEEKLY', count: 3 }, { exdates: ['2026-12-21T09:00:00+01:00'], rdates: [extra] })
+```
+
+A floating value is read on its line's TZID, else on the rule's zone; a `Z`
+value is the instant it names. Date-times only: `VALUE=DATE` would name days
+of a series of times, which RFC 5545 forbids, and an RDATE `PERIOD` is not an
+occurrence — both are refused rather than guessed at.
+
+A rule from user input or an imported .ics is safe to expand: the rule is
+capped at 8 KB and the whole text, exceptions included, at 256 KB; EXDATE and
+RDATE name at most 10 000 date-times; BY* lists are sets, at most 10 000
+occurrences come back, and iteration ends at year 9999, so an unsatisfiable
+rule answers `[]` in milliseconds. Unknown properties and malformed parts are
+refused.
 
 ## Ranges
 

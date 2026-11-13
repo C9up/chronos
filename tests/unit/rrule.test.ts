@@ -1023,3 +1023,46 @@ describe("expandRRule — zones (TZID)", () => {
 		).toThrow(/both a TZID and a UTC/);
 	});
 });
+
+describe("expandRRule exceptions (RFC 5545 EXDATE and RDATE)", () => {
+	const zurich = (iso: string) => DateTime.from(iso).setZone("Europe/Zurich").toISO();
+
+	it("keeps a weekly 09:00 Zurich slot at 09:00 across both changes of time", () => {
+		const slot = "DTSTART;TZID=Europe/Zurich:20261019T090000\nRRULE:FREQ=WEEKLY;COUNT=2";
+		expect(expandRRule(slot).map(zurich)).toEqual(["2026-10-19T09:00:00.000+02:00", "2026-10-26T09:00:00.000+01:00"]);
+	});
+
+	it("reads EXDATE and RDATE lines from the rule text", () => {
+		const text = [
+			"DTSTART;TZID=Europe/Zurich:20261214T090000",
+			"RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4",
+			"EXDATE;TZID=Europe/Zurich:20261228T090000",
+			"RDATE;TZID=Europe/Zurich:20261230T140000",
+		].join("\n");
+		expect(expandRRule(text).map(zurich)).toEqual([
+			"2026-12-14T09:00:00.000+01:00",
+			"2026-12-21T09:00:00.000+01:00",
+			"2026-12-30T14:00:00.000+01:00",
+			"2027-01-04T09:00:00.000+01:00",
+		]);
+	});
+
+	it("takes exceptions as options, as instants or DateTimes, with a structured rule too", () => {
+		const start = DateTime.fromISO("2026-12-14T09:00:00", { zone: "Europe/Zurich" });
+		const out = expandRRule(start, { freq: "WEEKLY", count: 3 }, {
+			exdates: ["2026-12-21T09:00:00.000+01:00"],
+			rdates: [DateTime.from("2026-12-23T08:30:00Z")],
+		});
+		expect(out.map(zurich)).toEqual(["2026-12-14T09:00:00.000+01:00", "2026-12-23T09:30:00.000+01:00", "2026-12-28T09:00:00.000+01:00"]);
+		expect(
+			expandRRule("DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY", { limit: 2, exdates: ["2026-01-01T10:00:00Z"] }),
+		).toEqual(["2026-01-02T10:00:00.000Z", "2026-01-03T10:00:00.000Z"]);
+	});
+
+	it("refuses an exception that cannot name an occurrence", () => {
+		expect(() => expandRRule("DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY;COUNT=2\nEXDATE;VALUE=DATE:20260102")).toThrow(
+			/VALUE=DATE is not supported/,
+		);
+		expect(() => expandRRule("2026-01-01T10:00:00Z", "FREQ=DAILY;COUNT=2", { rdates: ["not a date"] })).toThrow();
+	});
+});

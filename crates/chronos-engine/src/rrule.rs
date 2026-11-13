@@ -29,6 +29,11 @@ const MAX_YEAR: i32 = 9999;
 /// Longest rule text accepted. Every BY* list fits well inside it once written
 /// without repetition (BYYEARDAY with all 732 values is about 3.3 KB).
 pub const MAX_RULE_LEN: usize = 8 * 1024;
+/// The whole text, EXDATE and RDATE lines included: a series of a few years
+/// keeps hundreds of exceptions, which the rule's own cap must not refuse.
+pub const MAX_TEXT_LEN: usize = 256 * 1024;
+/// EXDATE and RDATE values, all lines together.
+pub const MAX_DATES: usize = 10_000;
 /// Most occurrences one call returns.
 pub const MAX_OCCURRENCES: usize = 10_000;
 /// Iteration steps allowed per call (periods for YEARLY/MONTHLY/WEEKLY, lattice
@@ -83,6 +88,21 @@ struct DtStartLine {
     tzid: Option<Tz>,
 }
 
+/// One `EXDATE` or `RDATE` line: its date-times, and the zone they are read in.
+struct DateListLine {
+    values: Vec<(NaiveDateTime, bool)>,
+    tzid: Option<Tz>,
+}
+
+/// What a rule text holds: the rule, its start if it names one, and the
+/// date-times it removes (EXDATE) and adds (RDATE).
+struct Parsed {
+    rule: RawRule,
+    dtstart: Option<DtStartLine>,
+    exdates: Vec<DateListLine>,
+    rdates: Vec<DateListLine>,
+}
+
 struct Rule {
     freq: Freq,
     interval: i64,
@@ -128,18 +148,23 @@ pub fn expand(
     limit: usize,
     tzid: Option<&str>,
 ) -> Result<Vec<String>, String> {
-    if rrule.len() > MAX_RULE_LEN {
+    if rrule.len() > MAX_TEXT_LEN {
         return Err(format!(
-            "RRULE is {} bytes long; the limit is {} bytes",
+            "The rule text is {} bytes long; the limit is {} bytes",
             rrule.len(),
-            MAX_RULE_LEN
+            MAX_TEXT_LEN
         ));
     }
     let option_zone = match tzid {
         Some(name) => Some(parse_zone(name)?),
         None => None,
     };
-    let (raw, dtstart_line) = parse_text(rrule)?;
+    let Parsed {
+        rule: raw,
+        dtstart: dtstart_line,
+        exdates,
+        rdates,
+    } = parse_text(rrule)?;
 
     let (dtstart, zone) = match (start_iso, dtstart_line) {
         (Some(_), Some(_)) => {
@@ -193,11 +218,15 @@ pub fn expand(
     } else {
         limit.min(MAX_OCCURRENCES)
     };
+    let excluded = resolve_dates(&exdates, zone, "EXDATE")?;
+    let added = resolve_dates(&rdates, zone, "RDATE")?;
     let mut expander = Expander {
         rule: &rule,
         dtstart,
         zone,
-        limit,
+        // Enough of the rule's own occurrences that, every EXDATE removed,
+        // `limit` of the set are still there.
+        limit: limit + excluded.len(),
         remaining: rule.count,
         out: Vec::new(),
         last: None,
@@ -212,7 +241,59 @@ pub fn expand(
             }
         }
     }
-    Ok(expander.out.into_iter().map(to_iso).collect())
+    // RFC 5545 §3.8.5: the set is the rule's occurrences and the RDATEs,
+    // without the EXDATEs — which remove an RDATE as well. COUNT and UNTIL
+    // bound the rule alone.
+    let mut set: Vec<DateTime<Utc>> = expander
+        .out
+        .into_iter()
+        .chain(added)
+        .filter(|instant| !excluded.contains(instant))
+        .collect();
+    set.sort_unstable();
+    set.dedup();
+    set.truncate(limit);
+    Ok(set.into_iter().map(to_iso).collect())
+}
+
+/// The instants a list of EXDATE or RDATE lines names: a UTC value as it is,
+/// a floating one on its line's zone, or the rule's, or UTC.
+fn resolve_dates(
+    lines: &[DateListLine],
+    zone: Option<Tz>,
+    property: &str,
+) -> Result<std::collections::BTreeSet<DateTime<Utc>>, String> {
+    let mut out = std::collections::BTreeSet::new();
+    for line in lines {
+        for &(value, utc) in &line.values {
+            let instant = if utc {
+                Some(Utc.from_utc_datetime(&value))
+            } else {
+                resolve(line.tzid.or(zone), value)
+            };
+            out.insert(
+                instant.ok_or_else(|| format!("Cannot resolve the {} {}", property, value))?,
+            );
+        }
+    }
+    Ok(out)
+}
+
+/// The instant a wall-clock time names in a zone: RFC 5545 §3.3.5 takes the
+/// first of two ambiguous times, and reads a time that does not exist with
+/// the offset in force before the gap (02:30 becomes 03:30).
+fn resolve(zone: Option<Tz>, local: NaiveDateTime) -> Option<DateTime<Utc>> {
+    match zone {
+        None => Some(Utc.from_utc_datetime(&local)),
+        Some(tz) => match tz.from_local_datetime(&local) {
+            LocalResult::Single(dt) => Some(dt.with_timezone(&Utc)),
+            LocalResult::Ambiguous(a, b) => Some(a.min(b).with_timezone(&Utc)),
+            LocalResult::None => {
+                let guess = offset_seconds_at(tz, local);
+                fix_offset(local, guess, tz).map(|utc| Utc.from_utc_datetime(&utc))
+            }
+        },
+    }
 }
 
 // ─── Parsing ────────────────────────────────────────────────────────────────
@@ -223,9 +304,12 @@ fn parse_zone(name: &str) -> Result<Tz, String> {
         .map_err(|_| format!("Unknown IANA timezone: '{}'", name))
 }
 
-fn parse_text(text: &str) -> Result<(RawRule, Option<DtStartLine>), String> {
+fn parse_text(text: &str) -> Result<Parsed, String> {
     let mut rule: Option<RawRule> = None;
     let mut dtstart: Option<DtStartLine> = None;
+    let mut exdates: Vec<DateListLine> = Vec::new();
+    let mut rdates: Vec<DateListLine> = Vec::new();
+    let mut dates = 0usize;
 
     for line in text.split(['\n', '\r']) {
         let line = line.trim();
@@ -245,6 +329,24 @@ fn parse_text(text: &str) -> Result<(RawRule, Option<DtStartLine>), String> {
                 dtstart = Some(parse_dtstart(&line[name.len()..])?);
                 continue;
             }
+            Some(name)
+                if name.eq_ignore_ascii_case("EXDATE") || name.eq_ignore_ascii_case("RDATE") =>
+            {
+                let list = parse_date_list(name, &line[name.len()..])?;
+                dates += list.values.len();
+                if dates > MAX_DATES {
+                    return Err(format!(
+                        "EXDATE and RDATE name more than {} date-times",
+                        MAX_DATES
+                    ));
+                }
+                if name.eq_ignore_ascii_case("EXDATE") {
+                    exdates.push(list);
+                } else {
+                    rdates.push(list);
+                }
+                continue;
+            }
             Some(name) if name.eq_ignore_ascii_case("RRULE") => {
                 let rest = &line[name.len()..];
                 rest.strip_prefix(':')
@@ -252,7 +354,7 @@ fn parse_text(text: &str) -> Result<(RawRule, Option<DtStartLine>), String> {
             }
             Some(name) => {
                 return Err(format!(
-                    "Unsupported property '{}': only DTSTART and RRULE are expanded",
+                    "Unsupported property '{}': only DTSTART, RRULE, EXDATE and RDATE are expanded",
                     name
                 ))
             }
@@ -273,11 +375,67 @@ fn parse_text(text: &str) -> Result<(RawRule, Option<DtStartLine>), String> {
         if rule.is_some() {
             return Err("Only one RRULE can be expanded at a time".to_string());
         }
+        // The rule itself keeps its own cap: only the date lists may be long.
+        if body.len() > MAX_RULE_LEN {
+            return Err(format!(
+                "RRULE is {} bytes long; the limit is {} bytes",
+                body.len(),
+                MAX_RULE_LEN
+            ));
+        }
         rule = Some(parse_rule_body(body)?);
     }
 
     let rule = rule.ok_or_else(|| "RRULE missing FREQ".to_string())?;
-    Ok((rule, dtstart))
+    Ok(Parsed {
+        rule,
+        dtstart,
+        exdates,
+        rdates,
+    })
+}
+
+/// `;TZID=Europe/Zurich:20261224T090000,20261231T090000`, `:20261224T080000Z`.
+/// Date-times only: a `VALUE=DATE` list would name days of a series of
+/// times, which RFC 5545 forbids, and an RDATE `PERIOD` is not an occurrence.
+fn parse_date_list(property: &str, rest: &str) -> Result<DateListLine, String> {
+    let at = rest
+        .find(':')
+        .ok_or_else(|| format!("Invalid {}: {}{}", property, property, rest))?;
+    let (params, values) = (&rest[..at], &rest[at + 1..]);
+    let mut tzid = None;
+    for param in params.split(';').filter(|p| !p.is_empty()) {
+        let (key, val) = param
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid {} parameter: {}", property, param))?;
+        if key.eq_ignore_ascii_case("TZID") {
+            tzid = Some(parse_zone(val.trim_matches('"'))?);
+        } else if key.eq_ignore_ascii_case("VALUE") {
+            if !val.eq_ignore_ascii_case("DATE-TIME") {
+                return Err(format!(
+                    "{} VALUE={} is not supported: give the date-time of each occurrence",
+                    property, val
+                ));
+            }
+        } else {
+            return Err(format!("Unsupported {} parameter: {}", property, key));
+        }
+    }
+    let mut out = Vec::new();
+    for value in values.split(',').map(str::trim) {
+        let (naive, utc) = match parse_basic_datetime(value) {
+            Some(parsed) if value.len() > 8 => parsed,
+            _ => return Err(format!("Invalid {} value: {}", property, value)),
+        };
+        if utc && tzid.is_some() {
+            return Err(format!(
+                "{} cannot carry both a TZID and a UTC 'Z' value",
+                property
+            ));
+        }
+        out.push((naive, utc));
+    }
+    Ok(DateListLine { values: out, tzid })
 }
 
 /// `;TZID=Europe/Paris:20260323T090000`, `:20260323T080000Z`, `=20260323`…
@@ -939,17 +1097,7 @@ impl Expander<'_> {
     /// first of two ambiguous times, and reads a time that does not exist with
     /// the offset in force before the gap (02:30 becomes 03:30).
     fn instant(&self, local: NaiveDateTime) -> Option<DateTime<Utc>> {
-        match self.zone {
-            None => Some(Utc.from_utc_datetime(&local)),
-            Some(tz) => match tz.from_local_datetime(&local) {
-                LocalResult::Single(dt) => Some(dt.with_timezone(&Utc)),
-                LocalResult::Ambiguous(a, b) => Some(a.min(b).with_timezone(&Utc)),
-                LocalResult::None => {
-                    let guess = offset_seconds_at(tz, local);
-                    fix_offset(local, guess, tz).map(|utc| Utc.from_utc_datetime(&utc))
-                }
-            },
-        }
+        resolve(self.zone, local)
     }
 
     fn emit(&mut self, local: NaiveDateTime) -> Result<Flow, String> {
@@ -1554,7 +1702,8 @@ mod tests {
             ("FREQ=DAILY;INTERVAL=0", "INTERVAL"),
             ("FREQ=DAILY;COUNT=99999999999", "Invalid COUNT"),
             ("COUNT=2", "missing FREQ"),
-            ("EXDATE:20260101T000000Z", "Unsupported property"),
+            // EXRULE is deprecated by RFC 5545; EXDATE and RDATE are expanded.
+            ("EXRULE:FREQ=WEEKLY", "Unsupported property"),
         ] {
             let err = run("2026-01-15T10:00:00Z", rule, 10).unwrap_err();
             assert!(err.contains(message), "{} -> {}", rule, err);
@@ -1637,5 +1786,160 @@ mod zone_tests {
             Some("Nowhere/X"),
         );
         assert!(unknown.unwrap_err().contains("Unknown IANA timezone"));
+    }
+}
+
+#[cfg(test)]
+mod exception_tests {
+    use super::*;
+
+    fn expand_text(text: &str, limit: usize) -> Result<Vec<String>, String> {
+        expand(None, text, limit, None)
+    }
+
+    #[test]
+    fn a_weekly_slot_at_nine_in_zurich_stays_at_nine_across_both_changes_of_time() {
+        // 29 March and 25 October 2026: CET to CEST and back.
+        let spring = expand_text(
+            "DTSTART;TZID=Europe/Zurich:20260323T090000\nRRULE:FREQ=WEEKLY;COUNT=2",
+            10,
+        )
+        .unwrap();
+        assert_eq!(
+            spring,
+            vec!["2026-03-23T08:00:00.000Z", "2026-03-30T07:00:00.000Z"]
+        );
+        let autumn = expand_text(
+            "DTSTART;TZID=Europe/Zurich:20261019T090000\nRRULE:FREQ=WEEKLY;COUNT=2",
+            10,
+        )
+        .unwrap();
+        assert_eq!(
+            autumn,
+            vec!["2026-10-19T07:00:00.000Z", "2026-10-26T08:00:00.000Z"]
+        );
+    }
+
+    #[test]
+    fn an_exdate_removes_an_occurrence_and_an_rdate_adds_one_in_order() {
+        let text = "DTSTART;TZID=Europe/Zurich:20261214T090000\n\
+                    RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4\n\
+                    EXDATE;TZID=Europe/Zurich:20261228T090000\n\
+                    RDATE;TZID=Europe/Zurich:20261230T140000";
+        assert_eq!(
+            expand_text(text, 10).unwrap(),
+            vec![
+                "2026-12-14T08:00:00.000Z",
+                "2026-12-21T08:00:00.000Z",
+                "2026-12-30T13:00:00.000Z",
+                "2027-01-04T08:00:00.000Z",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_floating_exdate_is_read_on_the_rule_zone_and_a_utc_one_as_it_is() {
+        let floating = "DTSTART;TZID=Europe/Zurich:20260706T090000\nRRULE:FREQ=DAILY;COUNT=3\nEXDATE:20260707T090000";
+        let utc = "DTSTART;TZID=Europe/Zurich:20260706T090000\nRRULE:FREQ=DAILY;COUNT=3\nEXDATE:20260707T070000Z";
+        let expected = vec!["2026-07-06T07:00:00.000Z", "2026-07-08T07:00:00.000Z"];
+        assert_eq!(expand_text(floating, 10).unwrap(), expected);
+        assert_eq!(expand_text(utc, 10).unwrap(), expected);
+        // An EXDATE that names no occurrence removes nothing.
+        let elsewhere = "DTSTART;TZID=Europe/Zurich:20260706T090000\nRRULE:FREQ=DAILY;COUNT=2\nEXDATE:20260707T100000";
+        assert_eq!(expand_text(elsewhere, 10).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn several_values_and_lines_add_up_and_an_exdate_removes_an_rdate_too() {
+        let text = "DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY;COUNT=2\n\
+                    RDATE:20260110T100000Z,20260111T100000Z\nRDATE:20260112T100000Z\n\
+                    EXDATE:20260111T100000Z,20260101T100000Z";
+        assert_eq!(
+            expand_text(text, 10).unwrap(),
+            vec![
+                "2026-01-02T10:00:00.000Z",
+                "2026-01-10T10:00:00.000Z",
+                "2026-01-12T10:00:00.000Z"
+            ]
+        );
+    }
+
+    #[test]
+    fn count_bounds_the_rule_alone_and_the_limit_the_whole_set() {
+        // COUNT=3 counts the rule's occurrences, the removed one included (RFC 5545).
+        let counted = "DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY;COUNT=3\nEXDATE:20260102T100000Z";
+        assert_eq!(
+            expand_text(counted, 10).unwrap(),
+            vec!["2026-01-01T10:00:00.000Z", "2026-01-03T10:00:00.000Z"]
+        );
+        // Without an end, the limit is reached despite what the EXDATEs remove.
+        let endless =
+            "DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY\nEXDATE:20260101T100000Z,20260102T100000Z";
+        assert_eq!(
+            expand_text(endless, 2).unwrap(),
+            vec!["2026-01-03T10:00:00.000Z", "2026-01-04T10:00:00.000Z"]
+        );
+        // An RDATE before the rule's first occurrence leads the set.
+        let early = "DTSTART:20260105T100000Z\nRRULE:FREQ=DAILY\nRDATE:20251231T100000Z";
+        assert_eq!(
+            expand_text(early, 2).unwrap(),
+            vec!["2025-12-31T10:00:00.000Z", "2026-01-05T10:00:00.000Z"]
+        );
+    }
+
+    #[test]
+    fn what_cannot_name_an_occurrence_is_refused() {
+        let base = "DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY;COUNT=2\n";
+        for (line, expected) in [
+            ("EXDATE;VALUE=DATE:20260102", "VALUE=DATE is not supported"),
+            (
+                "RDATE;VALUE=PERIOD:20260102T100000Z/PT1H",
+                "VALUE=PERIOD is not supported",
+            ),
+            (
+                "EXDATE;TZID=Europe/Zurich:20260102T100000Z",
+                "both a TZID and a UTC",
+            ),
+            ("EXDATE:20260102", "Invalid EXDATE value"),
+            ("RDATE:tomorrow", "Invalid RDATE value"),
+            (
+                "EXDATE;TZID=Mars/Olympus:20260102T100000",
+                "Unknown IANA timezone",
+            ),
+            (
+                "EXDATE;X-FOO=1:20260102T100000Z",
+                "Unsupported EXDATE parameter",
+            ),
+        ] {
+            let err = expand_text(&format!("{}{}", base, line), 10).unwrap_err();
+            assert!(err.contains(expected), "{}: {}", line, err);
+        }
+    }
+
+    #[test]
+    fn date_lists_are_bounded_and_may_be_long_while_the_rule_stays_capped() {
+        let values: Vec<String> = (0..2000)
+            .map(|i| format!("2027{:04}T100000Z", 101 + i % 28))
+            .collect();
+        let long = format!(
+            "DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY;COUNT=2\nEXDATE:{}",
+            values.join(",")
+        );
+        assert!(long.len() > MAX_RULE_LEN);
+        assert_eq!(expand_text(&long, 10).unwrap().len(), 2);
+        let too_many = format!(
+            "DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY;COUNT=2\nEXDATE:{}",
+            vec!["20270101T100000Z"; MAX_DATES + 1].join(",")
+        );
+        assert!(expand_text(&too_many, 10)
+            .unwrap_err()
+            .contains(&format!("more than {}", MAX_DATES)));
+        let rule = format!(
+            "DTSTART:20260101T100000Z\nRRULE:FREQ=DAILY;BYHOUR={}",
+            vec!["1"; 5000].join(",")
+        );
+        assert!(expand_text(&rule, 1)
+            .unwrap_err()
+            .contains("limit is 8192 bytes"));
     }
 }
