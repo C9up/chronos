@@ -1,0 +1,562 @@
+## Pinned engine behaviour: `function|argument|… => result`, read by pinned_behaviour.rs.
+## A line starting with `# ` opens a section; `##` lines are comments.
+
+# ISO input: what parse_iso accepts, echoed through a zero-second add
+add|2026-01-15T10:00:00Z|0|second => 2026-01-15T10:00:00.000Z
+add|2026-01-15T10:00:00.123456789Z|0|second => 2026-01-15T10:00:00.123Z
+add|2026-01-15T10:00:00.1234567891Z|0|second => 2026-01-15T10:00:00.123Z
+add|2026-01-15T10:00:00.9999Z|0|second => 2026-01-15T10:00:00.999Z
+add|2026-01-15t10:00:00z|0|second => 2026-01-15T10:00:00.000Z
+add|2026-01-15 10:00:00Z|0|second => 2026-01-15T10:00:00.000Z
+add|2026-01-15T10:00:00+01:00|0|second => 2026-01-15T09:00:00.000Z
+add|2026-01-15T10:00:00-01:30|0|second => 2026-01-15T11:30:00.000Z
+add|2026-01-15T10:00:00+23:59|0|second => 2026-01-14T10:01:00.000Z
+add|2026-01-15T10:00:00+24:00|0|second => ERR Invalid ISO date-time: 2026-01-15T10:00:00+24:00
+add|2026-01-15T10:00:00+0100|0|second => ERR Invalid ISO date-time: 2026-01-15T10:00:00+0100
+add|2026-01-15T10:00:00−01:00|0|second => 2026-01-15T11:00:00.000Z
+add|2026-01-15T10:00:00+01:60|0|second => ERR Invalid ISO date-time: 2026-01-15T10:00:00+01:60
+add|2026-01-15T10:00:00|0|second => ERR Invalid ISO date-time: 2026-01-15T10:00:00
+add|2026-01-15T10:00:00Z |0|second => ERR Invalid ISO date-time: 2026-01-15T10:00:00Z 
+add| 2026-01-15T10:00:00Z|0|second => ERR Invalid ISO date-time:  2026-01-15T10:00:00Z
+add|2026-01-15T10:00Z|0|second => ERR Invalid ISO date-time: 2026-01-15T10:00Z
+add|2026-01-15T10:00:00.Z|0|second => ERR Invalid ISO date-time: 2026-01-15T10:00:00.Z
+add|2026-01-15T24:00:00Z|0|second => ERR Invalid ISO date-time: 2026-01-15T24:00:00Z
+add|2026-01-15 10:00:00|0|second => 2026-01-15T10:00:00.000Z
+add|2026-1-5 1:2:3|0|second => 2026-01-05T01:02:03.000Z
+add| 2026-01-15 10:00:00|0|second => 2026-01-15T10:00:00.000Z
+add|2026-01-15  10:00:00|0|second => 2026-01-15T10:00:00.000Z
+add|2026-01-1510:00:00|0|second => 2026-01-15T10:00:00.000Z
+add|2026-01-15 10:00:00 |0|second => ERR Invalid ISO date-time: 2026-01-15 10:00:00 
+add|2026-01-15|0|second => 2026-01-15T00:00:00.000Z
+add| 2026-01-15|0|second => 2026-01-15T00:00:00.000Z
+add|2026-1-5|0|second => 2026-01-05T00:00:00.000Z
+add|26-01-15|0|second => 0026-01-15T00:00:00.000Z
+add|+2026-01-15|0|second => 2026-01-15T00:00:00.000Z
+add|2026-02-29|0|second => ERR Invalid ISO date-time: 2026-02-29
+add|2024-02-29|0|second => 2024-02-29T00:00:00.000Z
+add|2026-02-30T00:00:00Z|0|second => ERR Invalid ISO date-time: 2026-02-30T00:00:00Z
+add|2026-13-01|0|second => ERR Invalid ISO date-time: 2026-13-01
+add|0000-01-01T00:00:00Z|0|second => 0000-01-01T00:00:00.000Z
+add|9999-12-31T23:59:59.999Z|0|second => 9999-12-31T23:59:59.999Z
+add|9999-12-31T23:59:59.9999Z|0|second => 9999-12-31T23:59:59.999Z
+add||0|second => ERR Invalid ISO date-time: 
+add|not a date|0|second => ERR Invalid ISO date-time: not a date
+add|2026-01-15T10:00:00Z|1|fortnight => ERR Unsupported unit: fortnight
+add|2026-01-15T10:00:00Z|1|Weeks => 2026-01-22T10:00:00.000Z
+
+# Leap years and month ends
+add|2024-01-31T10:00:00Z|1|month => 2024-02-29T10:00:00.000Z
+add|2025-01-31T10:00:00Z|1|month => 2025-02-28T10:00:00.000Z
+add|2024-03-31T10:00:00Z|-1|month => 2024-02-29T10:00:00.000Z
+add|2024-02-29T10:00:00Z|1|year => 2025-02-28T10:00:00.000Z
+add|2024-02-29T10:00:00Z|4|years => 2028-02-29T10:00:00.000Z
+add|2024-02-29T10:00:00Z|-100|year => 1924-02-29T10:00:00.000Z
+add|2000-02-29T10:00:00Z|100|year => 2100-02-28T10:00:00.000Z
+add|2026-01-31T10:00:00.250Z|13|months => 2027-02-28T10:00:00.250Z
+add|2026-01-31T10:00:00Z|-13|months => 2024-12-31T10:00:00.000Z
+add|2024-02-28T23:00:00Z|2|hours => 2024-02-29T01:00:00.000Z
+add|2024-02-28T00:00:00Z|1|day => 2024-02-29T00:00:00.000Z
+add|2023-02-28T00:00:00Z|1|day => 2023-03-01T00:00:00.000Z
+add|2026-12-31T00:00:00Z|1|week => 2027-01-07T00:00:00.000Z
+add|9999-12-31T00:00:00Z|1|day => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+add|9999-12-31T23:59:59.999Z|1|second => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+add|0000-01-01T00:00:00Z|-1|second => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+add|0000-03-01T00:00:00Z|-1|day => 0000-02-29T00:00:00.000Z
+add|0004-02-29T00:00:00Z|-4|years => 0000-02-29T00:00:00.000Z
+diff|2024-02-29T00:00:00Z|2024-01-31T00:00:00Z|months => 1.0
+diff|2024-03-31T00:00:00Z|2024-02-29T00:00:00Z|month => 1.064516129032258
+diff|2025-02-28T00:00:00Z|2024-02-29T00:00:00Z|years => 1.0
+diff|2024-02-29T12:00:00Z|2023-02-28T00:00:00Z|year => 1.0040983606557377
+diff|2026-07-15T00:00:00Z|2026-01-31T00:00:00Z|months => 5.483870967741936
+diff|2026-01-15T10:00:00Z|2026-03-15T10:00:00Z|months => -2.0
+diff|2024-03-01T00:00:00Z|2024-02-28T00:00:00Z|days => 2.0
+diff|2024-03-01T00:00:00.500Z|2024-02-28T00:00:00Z|seconds => 172800.5
+diff|2026-01-01T00:00:00Z|2025-01-01T00:00:00Z|weeks => 52.142857142857146
+diff|2026-01-01T00:00:00Z|2025-01-01T00:00:00Z|milliseconds => 31536000000.0
+diff|2026-01-01T00:00:00Z|2025-01-01T00:00:00Z|hours => 8760.0
+diff|2026-01-01T00:00:00Z|2025-01-01T00:00:00Z|minutes => 525600.0
+diff|2026-01-01T00:00:00Z|2025-01-01T00:00:00Z|decades => ERR Unsupported unit: decades
+diff|9999-12-31T23:59:59.999Z|0000-01-01T00:00:00Z|years => 9999.999999999969
+start_of|2024-02-29T13:45:30.250Z|year => 2024-01-01T00:00:00.000Z
+start_of|2024-02-29T13:45:30.250Z|month => 2024-02-01T00:00:00.000Z
+start_of|2024-02-29T13:45:30.250Z|week => 2024-02-26T00:00:00.000Z
+start_of|2024-02-29T13:45:30.250Z|day => 2024-02-29T00:00:00.000Z
+start_of|2024-02-29T13:45:30.250Z|hour => 2024-02-29T13:00:00.000Z
+start_of|2024-02-29T13:45:30.250Z|minute => 2024-02-29T13:45:00.000Z
+start_of|2024-02-29T13:45:30.250Z|second => 2024-02-29T13:45:30.000Z
+start_of|2024-02-29T13:45:30.250Z|Month => 2024-02-01T00:00:00.000Z
+start_of|2024-02-29T13:45:30.250Z|quarter => ERR Unsupported unit: quarter
+start_of|0000-01-01T00:00:00Z|week => -0001-12-27T00:00:00.000Z
+start_of|2027-01-01T00:00:00Z|week => 2026-12-28T00:00:00.000Z
+end_of|2024-02-10T13:45:30.250Z|month => 2024-02-29T23:59:59.999Z
+end_of|2100-02-10T00:00:00Z|month => 2100-02-28T23:59:59.999Z
+end_of|2000-02-10T00:00:00Z|month => 2000-02-29T23:59:59.999Z
+end_of|2024-04-30T13:45:30.250Z|month => 2024-04-30T23:59:59.999Z
+end_of|2024-12-31T13:45:30.250Z|year => 2024-12-31T23:59:59.999Z
+end_of|2024-12-31T13:45:30.250Z|week => 2025-01-05T23:59:59.999Z
+end_of|2024-12-31T13:45:30.250Z|day => 2024-12-31T23:59:59.999Z
+end_of|2024-12-31T13:45:30.250Z|hour => 2024-12-31T13:59:59.999Z
+end_of|2024-12-31T13:45:30.250Z|minute => 2024-12-31T13:45:59.999Z
+end_of|2024-12-31T13:45:30.250Z|second => 2024-12-31T13:45:30.999Z
+end_of|9999-12-31T12:00:00Z|year => 9999-12-31T23:59:59.999Z
+end_of|9999-12-31T12:00:00Z|month => 9999-12-31T23:59:59.999Z
+end_of|9999-12-31T12:00:00Z|day => 9999-12-31T23:59:59.999Z
+end_of|9999-12-31T23:59:59Z|second => 9999-12-31T23:59:59.999Z
+end_of|9999-12-31T12:00:00Z|decade => ERR Unsupported unit: decade
+
+# Calendar parts and ISO week numbers
+calendar_parts|2026-04-08T14:30:45.678Z => 2026-04-08 14:30:45.678 weekday=3 week=15 week_year=2026 ordinal=98 quarter=2 days_in_month=30 days_in_year=365 leap=false
+calendar_parts|2020-12-31T00:00:00Z => 2020-12-31 00:00:00.000 weekday=4 week=53 week_year=2020 ordinal=366 quarter=4 days_in_month=31 days_in_year=366 leap=true
+calendar_parts|2021-01-03T00:00:00Z => 2021-01-03 00:00:00.000 weekday=7 week=53 week_year=2020 ordinal=3 quarter=1 days_in_month=31 days_in_year=365 leap=false
+calendar_parts|2021-01-04T00:00:00Z => 2021-01-04 00:00:00.000 weekday=1 week=1 week_year=2021 ordinal=4 quarter=1 days_in_month=31 days_in_year=365 leap=false
+calendar_parts|2026-12-31T00:00:00Z => 2026-12-31 00:00:00.000 weekday=4 week=53 week_year=2026 ordinal=365 quarter=4 days_in_month=31 days_in_year=365 leap=false
+calendar_parts|2027-01-01T00:00:00Z => 2027-01-01 00:00:00.000 weekday=5 week=53 week_year=2026 ordinal=1 quarter=1 days_in_month=31 days_in_year=365 leap=false
+calendar_parts|2027-01-04T00:00:00Z => 2027-01-04 00:00:00.000 weekday=1 week=1 week_year=2027 ordinal=4 quarter=1 days_in_month=31 days_in_year=365 leap=false
+calendar_parts|2018-12-31T00:00:00Z => 2018-12-31 00:00:00.000 weekday=1 week=1 week_year=2019 ordinal=365 quarter=4 days_in_month=31 days_in_year=365 leap=false
+calendar_parts|2024-12-30T00:00:00Z => 2024-12-30 00:00:00.000 weekday=1 week=1 week_year=2025 ordinal=365 quarter=4 days_in_month=31 days_in_year=366 leap=true
+calendar_parts|2016-01-03T00:00:00Z => 2016-01-03 00:00:00.000 weekday=7 week=53 week_year=2015 ordinal=3 quarter=1 days_in_month=31 days_in_year=366 leap=true
+calendar_parts|2000-02-29T00:00:00Z => 2000-02-29 00:00:00.000 weekday=2 week=9 week_year=2000 ordinal=60 quarter=1 days_in_month=29 days_in_year=366 leap=true
+calendar_parts|1900-02-28T00:00:00Z => 1900-02-28 00:00:00.000 weekday=3 week=9 week_year=1900 ordinal=59 quarter=1 days_in_month=28 days_in_year=365 leap=false
+calendar_parts|2100-03-01T00:00:00Z => 2100-03-01 00:00:00.000 weekday=1 week=9 week_year=2100 ordinal=60 quarter=1 days_in_month=31 days_in_year=365 leap=false
+calendar_parts|2024-12-31T23:59:59.999Z => 2024-12-31 23:59:59.999 weekday=2 week=1 week_year=2025 ordinal=366 quarter=4 days_in_month=31 days_in_year=366 leap=true
+calendar_parts|0000-01-01T00:00:00Z => 0000-01-01 00:00:00.000 weekday=6 week=52 week_year=-1 ordinal=1 quarter=1 days_in_month=31 days_in_year=366 leap=true
+calendar_parts|9999-12-31T23:59:59.999Z => 9999-12-31 23:59:59.999 weekday=5 week=52 week_year=9999 ordinal=365 quarter=4 days_in_month=31 days_in_year=365 leap=false
+calendar_parts|2026-04-08T14:30:45.6789Z => 2026-04-08 14:30:45.678 weekday=3 week=15 week_year=2026 ordinal=98 quarter=2 days_in_month=30 days_in_year=365 leap=false
+calendar_parts|2026-04-08T14:30:45+14:00 => 2026-04-08 00:30:45.000 weekday=3 week=15 week_year=2026 ordinal=98 quarter=2 days_in_month=30 days_in_year=365 leap=false
+
+# Formatting tokens
+format|2026-04-08T14:05:09.123Z|YYYY-MM-DD HH:mm:ss => 2026-04-08 14:05:09
+format|2026-04-08T14:05:09.123Z|YYYY-MM-DD[T]HH:mm:ssZ => 2026-04-08T14:05:09+00:00
+format|2005-01-02T03:04:05Z|YY/MM/DD => 05/01/02
+format|0000-01-01T00:00:00Z|YYYY YY => 0000 00
+format|0099-01-01T00:00:00Z|YYYY YY => 0099 99
+format|0999-01-01T00:00:00Z|YYYY => 0999
+format|-1-01-01 00:00:00|YYYY YY MM => -0001 99 01
+format|2026-04-08T14:05:09Z|YYYYY MMM DDD HHH mmm sss ZZ => 2026Y 04M 08D 14H 05m 09s +00:00+00:00
+format|2026-04-08T14:05:09Z|Y M D H m s => Y M D H m s
+format|2026-04-08T14:05:09Z|yyyy dd hh SSS a => yyyy dd hh SSS a
+format|2026-04-08T14:05:09Z|[YYYY] [[MM]] [ => YYYY [MM] 
+format|2026-04-08T14:05:09Z|YYYY [unterminated MM => 2026 unterminated MM
+format|2026-04-08T14:05:09Z|100% %Y %% % => 100% %Y %% %
+format|2026-04-08T14:05:09Z|[%] => %
+format|2026-04-08T14:05:09Z|DD.MM.YYYY – HH:mm => 08.04.2026 – 14:05
+format|2026-04-08T14:05:09Z| => 
+format|2026-04-08T14:05:09+02:00|HH:mm Z => 12:05 +00:00
+format|2026-04-08|YYYY-MM-DD HH:mm:ss => 2026-04-08 00:00:00
+
+# Zone names
+validate_timezone|Europe/Paris => Europe/Paris
+validate_timezone|US/Eastern => US/Eastern
+validate_timezone|UTC => UTC
+validate_timezone|Etc/UTC => Etc/UTC
+validate_timezone|GMT => GMT
+validate_timezone|Etc/GMT+5 => Etc/GMT+5
+validate_timezone|Etc/GMT-14 => Etc/GMT-14
+validate_timezone|EST5EDT => EST5EDT
+validate_timezone|EST => EST
+validate_timezone|Europe/Kiev => Europe/Kiev
+validate_timezone|Europe/Kyiv => Europe/Kyiv
+validate_timezone|Asia/Calcutta => Asia/Calcutta
+validate_timezone|America/Argentina/ComodRivadavia => America/Argentina/ComodRivadavia
+validate_timezone|utc => ERR Unknown IANA timezone: 'utc'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|europe/paris => ERR Unknown IANA timezone: 'europe/paris'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|EUROPE/PARIS => ERR Unknown IANA timezone: 'EUROPE/PARIS'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone| Europe/Paris => ERR Unknown IANA timezone: ' Europe/Paris'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|Europe/Paris => Europe/Paris
+validate_timezone|Factory => ERR Unknown IANA timezone: 'Factory'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|Etc/Unknown => ERR Unknown IANA timezone: 'Etc/Unknown'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|posix/Europe/Paris => ERR Unknown IANA timezone: 'posix/Europe/Paris'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|right/UTC => ERR Unknown IANA timezone: 'right/UTC'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|Europe => ERR Unknown IANA timezone: 'Europe'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|+01:00 => ERR Unknown IANA timezone: '+01:00'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone|CET-1CEST,M3.5.0,M10.5.0/3 => ERR Unknown IANA timezone: 'CET-1CEST,M3.5.0,M10.5.0/3'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+validate_timezone| => ERR Unknown IANA timezone: ''. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+to_zone|2026-04-08T14:00:00Z|europe/paris => ERR Unknown timezone: europe/paris
+rrule|2026-01-05T09:00:00Z|FREQ=DAILY;COUNT=1|10|europe/paris => ERR Unknown IANA timezone: 'europe/paris'
+parse_sql|2026-08-10 12:00:00 europe/paris|- => ERR Invalid SQL datetime: 2026-08-10 12:00:00 europe/paris
+
+# Zone offsets, historical ones with seconds included
+to_zone|2026-07-15T14:00:00Z|Europe/Paris => 2026-07-15T16:00:00+02:00 120 Europe/Paris
+to_zone|2026-01-15T14:00:00Z|Europe/Paris => 2026-01-15T15:00:00+01:00 60 Europe/Paris
+to_zone|2026-01-15T14:00:00.500Z|UTC => 2026-01-15T14:00:00.500+00:00 0 UTC
+to_zone|2026-01-15T14:00:00.000001Z|UTC => 2026-01-15T14:00:00.000001+00:00 0 UTC
+to_zone|2026-01-15T14:00:00.000000001Z|Asia/Tokyo => 2026-01-15T23:00:00.000000001+09:00 540 Asia/Tokyo
+to_zone|2026-01-15T14:00:00.120Z|America/New_York => 2026-01-15T09:00:00.120-05:00 -300 America/New_York
+to_zone|1900-01-01T00:00:00Z|Europe/Paris => 1900-01-01T00:09:21+00:09 9 Europe/Paris
+to_zone|1850-01-01T00:00:00Z|Europe/Paris => 1850-01-01T00:09:21+00:09 9 Europe/Paris
+to_zone|1930-01-01T00:00:00Z|Europe/Amsterdam => 1930-01-01T00:00:00+00:00 0 Europe/Amsterdam
+to_zone|1880-01-01T00:00:00Z|America/New_York => 1879-12-31T19:03:58-04:56 -296 America/New_York
+to_zone|1800-01-01T00:00:00Z|Asia/Kolkata => 1800-01-01T05:53:28+05:53 353 Asia/Kolkata
+to_zone|1900-01-01T00:00:00Z|Africa/Monrovia => 1899-12-31T23:16:52-00:43 -43 Africa/Monrovia
+to_zone|1970-01-01T00:00:00Z|Africa/Monrovia => 1969-12-31T23:15:30-00:45 -44 Africa/Monrovia
+to_zone|2026-01-15T00:00:00Z|Pacific/Chatham => 2026-01-15T13:45:00+13:45 825 Pacific/Chatham
+to_zone|2026-07-15T00:00:00Z|Pacific/Chatham => 2026-07-15T12:45:00+12:45 765 Pacific/Chatham
+to_zone|2026-07-15T00:00:00Z|Asia/Kathmandu => 2026-07-15T05:45:00+05:45 345 Asia/Kathmandu
+to_zone|2026-01-15T00:00:00Z|Australia/Lord_Howe => 2026-01-15T11:00:00+11:00 660 Australia/Lord_Howe
+to_zone|2026-07-15T00:00:00Z|Australia/Lord_Howe => 2026-07-15T10:30:00+10:30 630 Australia/Lord_Howe
+to_zone|2026-07-15T00:00:00Z|Etc/GMT+5 => 2026-07-14T19:00:00-05:00 -300 Etc/GMT+5
+to_zone|2026-07-15T00:00:00Z|Pacific/Kiritimati => 2026-07-15T14:00:00+14:00 840 Pacific/Kiritimati
+to_zone|2026-07-15T00:00:00Z|America/St_Johns => 2026-07-14T21:30:00-02:30 -150 America/St_Johns
+to_zone|0000-01-01T00:00:00Z|UTC => 0000-01-01T00:00:00+00:00 0 UTC
+to_zone|0000-01-01T00:00:00Z|America/New_York => -0001-12-31T19:03:58-04:56 -296 America/New_York
+to_zone|9999-12-31T00:00:00Z|Europe/Paris => 9999-12-31T01:00:00+01:00 60 Europe/Paris
+to_zone|2026-07-15T00:00:00Z|Nowhere/City => ERR Unknown timezone: Nowhere/City
+zone_offset|1880-01-01T00:00:00Z|America/New_York => -296
+zone_offset|1930-01-01T00:00:00Z|Europe/Amsterdam => 0
+zone_offset|1900-01-01T00:00:00Z|Africa/Monrovia => -43
+zone_offset|2026-07-15T00:00:00Z|America/St_Johns => -150
+zone_offset|2026-07-15T00:00:00Z|Nowhere/City => ERR Unknown timezone: Nowhere/City
+
+# DST transitions: the instants either side of a change
+zone_offset|2026-03-29T00:59:59.999Z|Europe/Paris => 60
+zone_offset|2026-03-29T01:00:00Z|Europe/Paris => 120
+zone_offset|2026-10-25T00:59:59.999Z|Europe/Paris => 120
+zone_offset|2026-10-25T01:00:00Z|Europe/Paris => 60
+zone_offset|2026-03-08T06:59:59Z|America/New_York => -300
+zone_offset|2026-03-08T07:00:00Z|America/New_York => -240
+zone_offset|2026-11-01T05:59:59Z|America/New_York => -240
+zone_offset|2026-11-01T06:00:00Z|America/New_York => -300
+zone_offset|2026-04-04T15:59:59Z|Australia/Sydney => 660
+zone_offset|2026-04-04T16:00:00Z|Australia/Sydney => 600
+zone_offset|2026-10-03T15:59:59Z|Australia/Sydney => 600
+zone_offset|2026-10-03T16:00:00Z|Australia/Sydney => 660
+zone_offset|2026-04-04T14:59:59Z|Australia/Lord_Howe => 660
+zone_offset|2026-04-04T15:00:00Z|Australia/Lord_Howe => 630
+zone_offset|2026-10-03T15:29:59Z|Australia/Lord_Howe => 630
+zone_offset|2026-10-03T15:30:00Z|Australia/Lord_Howe => 660
+zone_offset|2026-04-04T13:59:59Z|Pacific/Chatham => 825
+zone_offset|2026-04-04T14:00:00Z|Pacific/Chatham => 765
+zone_offset|2011-12-30T09:59:59Z|Pacific/Apia => -600
+zone_offset|2011-12-30T10:00:00Z|Pacific/Apia => 840
+zone_offset|2018-11-04T02:59:59Z|America/Sao_Paulo => -180
+zone_offset|2018-11-04T03:00:00Z|America/Sao_Paulo => -120
+zone_offset|2026-07-15T00:00:00Z|America/Sao_Paulo => -180
+zone_offset|1916-04-30T21:59:59Z|Europe/Berlin => 60
+zone_offset|1916-04-30T22:00:00Z|Europe/Berlin => 120
+zone_offset|2037-07-01T12:00:00Z|Europe/Paris => 120
+zone_offset|2050-01-01T12:00:00Z|Europe/Paris => 60
+to_zone|2026-03-29T00:59:59.999Z|Europe/Paris => 2026-03-29T01:59:59.999+01:00 60 Europe/Paris
+to_zone|2026-03-29T01:00:00Z|Europe/Paris => 2026-03-29T03:00:00+02:00 120 Europe/Paris
+to_zone|2026-10-25T00:30:00Z|Europe/Paris => 2026-10-25T02:30:00+02:00 120 Europe/Paris
+to_zone|2026-10-25T01:30:00Z|Europe/Paris => 2026-10-25T02:30:00+01:00 60 Europe/Paris
+to_zone|2026-11-01T05:30:00Z|America/New_York => 2026-11-01T01:30:00-04:00 -240 America/New_York
+to_zone|2026-11-01T06:30:00Z|America/New_York => 2026-11-01T01:30:00-05:00 -300 America/New_York
+
+# Times a zone skips or repeats
+from_local|2026-03-29T02:30:00|Europe/Paris => 2026-03-29T01:30:00.000Z
+from_local|2026-03-29T02:00:00|Europe/Paris => 2026-03-29T01:00:00.000Z
+from_local|2026-03-29T03:00:00|Europe/Paris => 2026-03-29T01:00:00.000Z
+from_local|2026-03-29T01:59:59|Europe/Paris => 2026-03-29T00:59:59.000Z
+from_local|2026-10-25T02:30:00|Europe/Paris => 2026-10-25T00:30:00.000Z
+from_local|2026-10-25T02:00:00|Europe/Paris => 2026-10-25T00:00:00.000Z
+from_local|2026-10-25T03:00:00|Europe/Paris => 2026-10-25T02:00:00.000Z
+from_local|2026-03-08T02:30:00|America/New_York => 2026-03-08T07:30:00.000Z
+from_local|2026-11-01T01:30:00|America/New_York => 2026-11-01T05:30:00.000Z
+from_local|2026-10-04T02:15:00|Australia/Lord_Howe => 2026-10-03T15:45:00.000Z
+from_local|2026-04-05T01:45:00|Australia/Lord_Howe => 2026-04-04T14:45:00.000Z
+from_local|2026-04-05T02:30:00|Australia/Sydney => 2026-04-04T15:30:00.000Z
+from_local|2026-10-04T02:30:00|Australia/Sydney => 2026-10-03T16:30:00.000Z
+from_local|2011-12-30T12:00:00|Pacific/Apia => 2011-12-30T22:00:00.000Z
+from_local|2011-12-29T23:59:59|Pacific/Apia => 2011-12-30T09:59:59.000Z
+from_local|2018-11-04T00:00:00|America/Sao_Paulo => 2018-11-04T03:00:00.000Z
+from_local|2018-11-04T00:30:00|America/Sao_Paulo => 2018-11-04T03:30:00.000Z
+from_local|2019-02-16T23:30:00|America/Sao_Paulo => 2019-02-17T01:30:00.000Z
+from_local|1916-05-01T00:00:00|Europe/Berlin => 1916-04-30T22:00:00.000Z
+from_local|2026-03-29 02:30:00|Europe/Paris => 2026-03-29T01:30:00.000Z
+from_local|2026-03-29T02:30:00Z|Europe/Paris => 2026-03-29T01:30:00.000Z
+from_local|2026-03-29T02:30:00ZZ|Europe/Paris => 2026-03-29T01:30:00.000Z
+from_local|  2026-03-29T02:30:00  |Europe/Paris => 2026-03-29T01:30:00.000Z
+from_local|2026-3-29T2:30:0|Europe/Paris => 2026-03-29T01:30:00.000Z
+from_local|2026-03-29T02:30|Europe/Paris => ERR Invalid naive datetime '2026-03-29T02:30': input contains invalid characters
+from_local|2026-03-29|Europe/Paris => ERR Invalid naive datetime '2026-03-29': premature end of input
+from_local|2026-03-29T02:30:00.500|Europe/Paris => ERR Invalid naive datetime '2026-03-29T02:30:00.500': input contains invalid characters
+from_local|2026-03-29T02:30:00+01:00|Europe/Paris => ERR Invalid naive datetime '2026-03-29T02:30:00+01:00': input contains invalid characters
+from_local|2026-02-30T02:30:00|Europe/Paris => ERR Invalid naive datetime '2026-02-30T02:30:00': input contains invalid characters
+from_local|0000-01-01T00:00:00|UTC => 0000-01-01T00:00:00.000Z
+from_local|0000-01-01T00:00:00|Asia/Tokyo => -0001-12-31T14:41:01.000Z
+from_local|2026-03-29T02:30:00|Nowhere/City => ERR Unknown timezone: Nowhere/City
+parse_sql|2026-03-29 02:30:00|Europe/Paris => 2026-03-29T01:30:00.000Z
+parse_sql|2026-10-25 02:30:00|Europe/Paris => 2026-10-25T00:30:00.000Z
+parse_sql|2026-10-25 02:30:00 Europe/Paris|- => 2026-10-25T00:30:00.000Z
+parse_sql|2026-11-01 01:30:00 America/New_York|- => 2026-11-01T05:30:00.000Z
+start_of_in_zone|2018-11-04T12:00:00Z|day|America/Sao_Paulo => 2018-11-04T03:00:00.000Z
+end_of_in_zone|2018-11-03T12:00:00Z|day|America/Sao_Paulo => 2018-11-04T02:59:59.999Z
+start_of_in_zone|2018-11-04T12:00:00Z|week|America/Sao_Paulo => 2018-10-29T03:00:00.000Z
+start_of_in_zone|2018-11-04T12:00:00Z|month|America/Sao_Paulo => 2018-11-01T03:00:00.000Z
+start_of_in_zone|2026-10-25T00:30:00Z|hour|Europe/Paris => 2026-10-25T00:00:00.000Z
+start_of_in_zone|2026-10-25T01:30:00Z|hour|Europe/Paris => 2026-10-25T01:00:00.000Z
+end_of_in_zone|2026-10-25T00:30:00Z|hour|Europe/Paris => 2026-10-25T01:59:59.999Z
+end_of_in_zone|2026-10-25T01:30:00Z|hour|Europe/Paris => 2026-10-25T01:59:59.999Z
+start_of_in_zone|2026-10-25T12:00:00Z|day|Europe/Paris => 2026-10-24T22:00:00.000Z
+end_of_in_zone|2026-10-25T12:00:00Z|day|Europe/Paris => 2026-10-25T22:59:59.999Z
+start_of_in_zone|2026-03-29T12:00:00Z|day|Europe/Paris => 2026-03-28T23:00:00.000Z
+end_of_in_zone|2026-03-29T12:00:00Z|day|Europe/Paris => 2026-03-29T21:59:59.999Z
+end_of_in_zone|2026-03-15T12:00:00Z|month|Europe/Paris => 2026-03-31T21:59:59.999Z
+end_of_in_zone|2026-03-15T12:00:00Z|year|Europe/Paris => 2026-12-31T22:59:59.999Z
+start_of_in_zone|2026-03-15T12:00:00Z|year|Europe/Paris => 2025-12-31T23:00:00.000Z
+start_of_in_zone|2026-03-29T00:30:00Z|minute|Australia/Lord_Howe => 2026-03-29T00:30:00.000Z
+start_of_in_zone|2026-07-15T00:00:00.999Z|second|Asia/Kathmandu => 2026-07-15T00:00:00.000Z
+start_of_in_zone|2011-12-31T12:00:00Z|week|Pacific/Apia => 2011-12-26T10:00:00.000Z
+end_of_in_zone|2011-12-29T12:00:00Z|day|Pacific/Apia => 2011-12-30T09:59:59.999Z
+end_of_in_zone|2026-03-15T12:00:00Z|fortnight|Europe/Paris => ERR Unsupported unit: fortnight
+start_of_in_zone|9999-12-31T12:00:00Z|year|Europe/Paris => 9998-12-31T23:00:00.000Z
+end_of_in_zone|0000-01-01T12:00:00Z|day|Europe/Paris => 0000-01-01T23:50:38.999Z
+
+# Arithmetic and differences across a change of time
+add_in_zone|2026-03-28T10:00:00Z|1|day|Europe/Paris => 2026-03-29T09:00:00.000Z
+add_in_zone|2026-03-28T01:30:00Z|1|day|Europe/Paris => 2026-03-29T01:30:00.000Z
+add_in_zone|2026-10-26T01:30:00Z|-1|day|Europe/Paris => 2026-10-25T01:30:00.000Z
+add_in_zone|2026-10-24T00:30:00Z|1|day|Europe/Paris => 2026-10-25T00:30:00.000Z
+add_in_zone|2026-10-24T10:00:00Z|1|day|Europe/Paris => 2026-10-25T11:00:00.000Z
+add_in_zone|2011-12-29T22:00:00Z|1|day|Pacific/Apia => 2011-12-30T22:00:00.000Z
+add_in_zone|2026-02-28T01:30:00Z|1|month|Europe/Paris => 2026-03-28T01:30:00.000Z
+add_in_zone|2026-01-31T12:00:00Z|1|month|Europe/Paris => 2026-02-28T12:00:00.000Z
+add_in_zone|2024-02-29T12:00:00Z|1|year|Europe/Paris => 2025-02-28T12:00:00.000Z
+add_in_zone|2026-03-22T01:30:00Z|1|week|Europe/Paris => 2026-03-29T01:30:00.000Z
+add_in_zone|2026-10-25T00:30:00Z|1|hour|Europe/Paris => 2026-10-25T01:30:00.000Z
+add_in_zone|2026-10-25T00:30:00Z|60|minutes|Europe/Paris => 2026-10-25T01:30:00.000Z
+add_in_zone|2026-03-29T00:30:00Z|1|hour|Europe/Paris => 2026-03-29T01:30:00.000Z
+add_in_zone|2026-11-01T05:30:00Z|1|hour|America/New_York => 2026-11-01T06:30:00.000Z
+add_in_zone|2018-11-03T03:00:00Z|1|day|America/Sao_Paulo => 2018-11-04T03:00:00.000Z
+add_in_zone|9999-12-30T12:00:00Z|1|day|Europe/Paris => 9999-12-31T12:00:00.000Z
+add_in_zone|9999-12-30T12:00:00Z|1|days|America/New_York => 9999-12-31T12:00:00.000Z
+add_in_zone|0000-01-02T12:00:00Z|-1|day|Europe/Paris => 0000-01-01T12:00:00.000Z
+add_in_zone|2026-03-28T10:00:00Z|1|fortnight|Europe/Paris => ERR Unsupported unit: fortnight
+add_in_zone|2026-03-28T10:00:00Z|1|day|Nowhere/City => ERR Unknown timezone: Nowhere/City
+diff_in_zone|2026-03-29T10:00:00Z|2026-03-28T11:00:00Z|day|Europe/Paris => 1.0
+diff_in_zone|2026-03-29T10:30:00Z|2026-03-28T23:00:00Z|day|Europe/Paris => 0.5
+diff_in_zone|2026-10-25T23:00:00Z|2026-10-24T22:00:00Z|days|Europe/Paris => 1.0
+diff_in_zone|2026-10-25T11:00:00Z|2026-10-24T22:00:00Z|days|Europe/Paris => 0.52
+diff_in_zone|2026-04-04T11:00:00Z|2026-03-28T12:00:00Z|week|Europe/Paris => 1.0
+diff_in_zone|2026-04-29T10:00:00Z|2026-03-28T23:00:00Z|months|Europe/Paris => 1.0166666666666666
+diff_in_zone|2026-11-15T00:00:00Z|2026-10-15T00:00:00Z|months|Europe/Paris => 0.9986577181208054
+diff_in_zone|2027-03-29T10:00:00Z|2026-03-28T11:00:00Z|years|Europe/Paris => 1.0027322404371584
+diff_in_zone|2025-02-28T00:00:00Z|2024-02-29T00:00:00Z|years|Pacific/Chatham => 1.0
+diff_in_zone|2026-03-01T00:00:00Z|2026-01-31T00:00:00Z|months|America/New_York => 1.0
+diff_in_zone|2026-01-31T00:00:00Z|2026-03-01T00:00:00Z|months|America/New_York => -1.0
+diff_in_zone|2026-03-29T10:00:00Z|2026-03-28T11:00:00Z|hours|Europe/Paris => 23.0
+diff_in_zone|2011-12-31T10:00:00Z|2011-12-29T10:00:00Z|days|Pacific/Apia => 3.0
+diff_in_zone|2026-03-29T10:00:00Z|2026-03-28T11:00:00Z|decades|Europe/Paris => ERR Unsupported unit: decades
+diff_in_zone|2026-03-29T10:00:00Z|2026-03-28T11:00:00Z|day|Nowhere/City => ERR Unknown timezone: Nowhere/City
+
+# Parsing SQL literals
+parse_sql|2026-08-10 12:00:00+00|- => 2026-08-10T12:00:00.000Z
+parse_sql|2026-08-10T12:00:00.5-03:30|- => 2026-08-10T15:30:00.500Z
+parse_sql|2026-08-10 12:00:00.1234567890|- => ERR Invalid SQL datetime: 2026-08-10 12:00:00.1234567890
+parse_sql|2026-08-10 12:00:00z|- => 2026-08-10T12:00:00.000Z
+parse_sql|2026-08-10 12:00:00 utc|- => ERR Invalid SQL datetime: 2026-08-10 12:00:00 utc
+parse_sql|2026-08-10 12:00:00 UTC|- => 2026-08-10T12:00:00.000Z
+parse_sql|2026-08-10 12:00:00  Europe/Paris|- => ERR Invalid SQL datetime: 2026-08-10 12:00:00  Europe/Paris
+parse_sql|2026-08-10 12:00:00|Asia/Kolkata => 2026-08-10T06:30:00.000Z
+parse_sql|2026-08-10|Pacific/Chatham => 2026-08-09T11:15:00.000Z
+parse_sql|2026-08-10 12:00:60|- => ERR Invalid SQL datetime: 2026-08-10 12:00:60
+parse_sql|2026-08-10 24:00:00|- => ERR Invalid SQL datetime: 2026-08-10 24:00:00
+parse_sql|2026-08-10 12:00:00+23:59|- => 2026-08-09T12:01:00.000Z
+parse_sql|2026-08-10 12:00:00+12:60|- => ERR Invalid SQL datetime: 2026-08-10 12:00:00+12:60
+parse_sql|0000-01-01 00:00:00|- => 0000-01-01T00:00:00.000Z
+parse_sql|0000-01-01 00:00:00+00:01|- => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+parse_sql|9999-12-31 23:59:59-00:01|- => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+parse_sql|9999-12-31 23:59:59|- => 9999-12-31T23:59:59.000Z
+parse_sql|2026-08-10 12:00:00|Nowhere/City => ERR Unknown timezone: Nowhere/City
+parse_sql|2026-08-10 12:00:00 Factory|- => ERR Invalid SQL datetime: 2026-08-10 12:00:00 Factory
+
+# Parsing RFC 2822
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +0200 => 2003-07-01T08:52:37.000Z
+parse_rfc2822|Tue, 01 Jul 2003 10:52:37 +0200 => 2003-07-01T08:52:37.000Z
+parse_rfc2822|1 Jul 2003 10:52:37 +0200 => 2003-07-01T08:52:37.000Z
+parse_rfc2822|Tue,1 Jul 2003 10:52:37 +0200 => 2003-07-01T08:52:37.000Z
+parse_rfc2822|  Tue ,1 Jul 2003 10:52:37 +0200 => ERR Invalid RFC 2822 date:   Tue ,1 Jul 2003 10:52:37 +0200 (input contains invalid characters)
+parse_rfc2822|Tue, 1 Jul 2003 10:52 +0200 => 2003-07-01T08:52:00.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10 : 52 : 37 +0200 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10 : 52 : 37 +0200 (input contains invalid characters)
+parse_rfc2822|tue, 1 jul 2003 10:52:37 gmt => 2003-07-01T10:52:37.000Z
+parse_rfc2822|Tue, 1 July 2003 10:52:37 +0200 => ERR Invalid RFC 2822 date: Tue, 1 July 2003 10:52:37 +0200 (input contains invalid characters)
+parse_rfc2822|Tuesday, 1 Jul 2003 10:52:37 +0200 => ERR Invalid RFC 2822 date: Tuesday, 1 Jul 2003 10:52:37 +0200 (input contains invalid characters)
+parse_rfc2822|Wed, 1 Jul 2003 10:52:37 +0200 => ERR Invalid RFC 2822 date: Wed, 1 Jul 2003 10:52:37 +0200 (no possible date and time matching input)
+parse_rfc2822|Tue, 1 Jul 03 10:52:37 +0200 => 2003-07-01T08:52:37.000Z
+parse_rfc2822|Thu, 1 Jul 99 10:52:37 +0200 => 1999-07-01T08:52:37.000Z
+parse_rfc2822|Thu, 1 Jul 49 10:52:37 +0200 => 2049-07-01T08:52:37.000Z
+parse_rfc2822|Thu, 1 Jul 50 10:52:37 +0200 => ERR Invalid RFC 2822 date: Thu, 1 Jul 50 10:52:37 +0200 (no possible date and time matching input)
+parse_rfc2822|Tue, 1 Jul 103 10:52:37 +0200 => 2003-07-01T08:52:37.000Z
+parse_rfc2822|1 Jul 0654 10:52:37 +0200 => 0654-07-01T08:52:37.000Z
+parse_rfc2822|1 Jul 3 10:52:37 +0200 => ERR Invalid RFC 2822 date: 1 Jul 3 10:52:37 +0200 (input contains invalid characters)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 -0000 => 2003-07-01T10:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 UT => 2003-07-01T10:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 Z => 2003-07-01T10:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 EST => 2003-07-01T15:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 EDT => 2003-07-01T14:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 CST => 2003-07-01T16:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 CDT => 2003-07-01T15:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 MST => 2003-07-01T17:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 MDT => 2003-07-01T16:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 PST => 2003-07-01T18:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 PDT => 2003-07-01T17:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 A => 2003-07-01T10:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 J => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 J (input contains invalid characters)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 CET => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 CET (input contains invalid characters)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +02 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 +02 (premature end of input)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +02:00 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 +02:00 (input contains invalid characters)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +2359 => 2003-06-30T10:53:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +2400 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 +2400 (input is out of range)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +9959 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 +9959 (input is out of range)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +0160 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 +0160 (input is out of range)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +0200 (CEST) => 2003-07-01T08:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +0200 (a (nested) \) comment) (two) => 2003-07-01T08:52:37.000Z
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +0200 (unclosed => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 +0200 (unclosed (trailing input)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 +0200 trailing => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 +0200 trailing (trailing input)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37+0200 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37+0200 (input contains invalid characters)
+parse_rfc2822|Tue, 1Jul 2003 10:52:37 +0200 => ERR Invalid RFC 2822 date: Tue, 1Jul 2003 10:52:37 +0200 (input contains invalid characters)
+parse_rfc2822|Tue, 31 Jun 2003 10:52:37 +0200 => ERR Invalid RFC 2822 date: Tue, 31 Jun 2003 10:52:37 +0200 (input is out of range)
+parse_rfc2822|Tue, 1 Jul 2003 24:00:00 +0200 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 24:00:00 +0200 (input is out of range)
+parse_rfc2822|Tue, 1 Jul 2003 10:60:00 +0200 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:60:00 +0200 (input is out of range)
+parse_rfc2822|Tue, 1 Jul 2003 1:52:37 +0200 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 1:52:37 +0200 (input contains invalid characters)
+parse_rfc2822|Tue, 1 Jul 2003 10:52:37 => ERR Invalid RFC 2822 date: Tue, 1 Jul 2003 10:52:37 (premature end of input)
+parse_rfc2822|Tue 1 Jul 2003 10:52:37 +0200 => ERR Invalid RFC 2822 date: Tue 1 Jul 2003 10:52:37 +0200 (input contains invalid characters)
+parse_rfc2822|Sat, 1 Jan 0000 00:00:00 +0000 => 0000-01-01T00:00:00.000Z
+parse_rfc2822|1 Jan 0000 00:00:00 +0001 => -0001-12-31T23:59:00.000Z
+parse_rfc2822|31 Dec 9999 23:59:59 +0000 => 9999-12-31T23:59:59.000Z
+parse_rfc2822|1 Jan 99999999999999999999 00:00:00 +0000 => ERR Invalid RFC 2822 date: 1 Jan 99999999999999999999 00:00:00 +0000 (input is out of range)
+parse_rfc2822| => ERR Invalid RFC 2822 date:  (premature end of input)
+parse_rfc2822|garbage => ERR Invalid RFC 2822 date: garbage (input contains invalid characters)
+
+# Parsing HTTP dates
+parse_http|Sun, 06 Nov 1994 08:49:37 GMT => 1994-11-06T08:49:37.000Z
+parse_http|Sunday, 06-Nov-94 08:49:37 GMT => 1994-11-06T08:49:37.000Z
+parse_http|Sunday, 06-Nov-68 08:49:37 GMT => ERR Invalid HTTP date: Sunday, 06-Nov-68 08:49:37 GMT
+parse_http|Thursday, 06-Nov-69 08:49:37 GMT => ERR Invalid HTTP date: Thursday, 06-Nov-69 08:49:37 GMT
+parse_http|Sun, 06-Nov-94 08:49:37 GMT => 1994-11-06T08:49:37.000Z
+parse_http|sunday, 06-nov-94 08:49:37 GMT => 1994-11-06T08:49:37.000Z
+parse_http|Sunday, 6-Nov-94 8:49:37 GMT => 1994-11-06T08:49:37.000Z
+parse_http|Sunday, 06-Nov-94 08:49:37 => 1994-11-06T08:49:37.000Z
+parse_http|Sunday, 06-Nov-94 08:49:37 GMT GMT => 1994-11-06T08:49:37.000Z
+parse_http|Sunday, 06-Nov-94 08:49:37 UTC => ERR Invalid HTTP date: Sunday, 06-Nov-94 08:49:37 UTC
+parse_http|Monday, 06-Nov-94 08:49:37 GMT => ERR Invalid HTTP date: Monday, 06-Nov-94 08:49:37 GMT
+parse_http|Sunday,06-Nov-94 08:49:37 GMT => 1994-11-06T08:49:37.000Z
+parse_http|Sunday , 06-Nov-94 08:49:37 GMT => ERR Invalid HTTP date: Sunday , 06-Nov-94 08:49:37 GMT
+parse_http|Sun Nov  6 08:49:37 1994 => 1994-11-06T08:49:37.000Z
+parse_http|Sun Nov 6 08:49:37 1994 => 1994-11-06T08:49:37.000Z
+parse_http|Sun Nov 06 08:49:37 1994 => 1994-11-06T08:49:37.000Z
+parse_http|sun nov  6 08:49:37 1994 => 1994-11-06T08:49:37.000Z
+parse_http|Sunday Nov  6 08:49:37 1994 => ERR Invalid HTTP date: Sunday Nov  6 08:49:37 1994
+parse_http|Mon Nov  6 08:49:37 1994 => ERR Invalid HTTP date: Mon Nov  6 08:49:37 1994
+parse_http|Sun Nov  6 08:49:37 94 => ERR Invalid HTTP date: Sun Nov  6 08:49:37 94
+parse_http|Sun Nov  6 08:49:37 +1994 => 1994-11-06T08:49:37.000Z
+parse_http|Sun Nov  6 08:49:37 1994 GMT => ERR Invalid HTTP date: Sun Nov  6 08:49:37 1994 GMT
+parse_http|Sun, 06 Nov 1994 08:49:37 +0100 => 1994-11-06T07:49:37.000Z
+parse_http|  Sun Nov  6 08:49:37 1994 => 1994-11-06T08:49:37.000Z
+parse_http| => ERR Invalid HTTP date: 
+parse_http|garbage => ERR Invalid HTTP date: garbage
+
+# Recurrences across a change of time
+rrule|2026-03-27T08:00:00Z|FREQ=DAILY;COUNT=5|10|Europe/Paris => 2026-03-27T08:00:00.000Z 2026-03-28T08:00:00.000Z 2026-03-29T07:00:00.000Z 2026-03-30T07:00:00.000Z 2026-03-31T07:00:00.000Z
+rrule|2026-03-27T01:30:00Z|FREQ=DAILY;COUNT=4|10|Europe/Paris => 2026-03-27T01:30:00.000Z 2026-03-28T01:30:00.000Z 2026-03-29T01:30:00.000Z 2026-03-30T00:30:00.000Z
+rrule|2026-10-23T00:30:00Z|FREQ=DAILY;COUNT=4|10|Europe/Paris => 2026-10-23T00:30:00.000Z 2026-10-24T00:30:00.000Z 2026-10-25T00:30:00.000Z 2026-10-26T01:30:00.000Z
+rrule|2026-10-24T23:00:00Z|FREQ=HOURLY;COUNT=5|10|Europe/Paris => 2026-10-24T23:00:00.000Z 2026-10-25T00:00:00.000Z 2026-10-25T02:00:00.000Z 2026-10-25T03:00:00.000Z 2026-10-25T04:00:00.000Z
+rrule|2026-03-29T00:00:00Z|FREQ=HOURLY;COUNT=4|10|Europe/Paris => 2026-03-29T00:00:00.000Z 2026-03-29T01:00:00.000Z 2026-03-29T02:00:00.000Z 2026-03-29T03:00:00.000Z
+rrule|2026-03-29T00:00:00Z|FREQ=MINUTELY;INTERVAL=30;COUNT=6|10|Europe/Paris => 2026-03-29T00:00:00.000Z 2026-03-29T00:30:00.000Z 2026-03-29T01:00:00.000Z 2026-03-29T01:30:00.000Z 2026-03-29T02:00:00.000Z 2026-03-29T02:30:00.000Z
+rrule|2026-10-25T00:00:00Z|FREQ=MINUTELY;INTERVAL=30;COUNT=6|10|Europe/Paris => 2026-10-25T00:00:00.000Z 2026-10-25T00:30:00.000Z 2026-10-25T02:00:00.000Z 2026-10-25T02:30:00.000Z 2026-10-25T03:00:00.000Z 2026-10-25T03:30:00.000Z
+rrule|-|DTSTART;TZID=America/New_York:20261025T013000\nRRULE:FREQ=WEEKLY;COUNT=3|10|- => 2026-10-25T05:30:00.000Z 2026-11-01T05:30:00.000Z 2026-11-08T06:30:00.000Z
+rrule|-|DTSTART;TZID=America/New_York:20260301T023000\nRRULE:FREQ=WEEKLY;COUNT=3|10|- => 2026-03-01T07:30:00.000Z 2026-03-08T07:30:00.000Z 2026-03-15T06:30:00.000Z
+rrule|-|DTSTART;TZID=Europe/Paris:20260125T023000\nRRULE:FREQ=MONTHLY;BYDAY=-1SU;COUNT=12|20|- => 2026-01-25T01:30:00.000Z 2026-02-22T01:30:00.000Z 2026-03-29T01:30:00.000Z 2026-04-26T00:30:00.000Z 2026-05-31T00:30:00.000Z 2026-06-28T00:30:00.000Z 2026-07-26T00:30:00.000Z 2026-08-30T00:30:00.000Z 2026-09-27T00:30:00.000Z 2026-10-25T00:30:00.000Z 2026-11-29T01:30:00.000Z 2026-12-27T01:30:00.000Z
+rrule|-|DTSTART;TZID=Europe/Paris:20261023T023000\nRRULE:FREQ=DAILY;COUNT=4\nEXDATE;TZID=Europe/Paris:20261025T023000|10|- => 2026-10-23T00:30:00.000Z 2026-10-24T00:30:00.000Z 2026-10-26T01:30:00.000Z
+rrule|-|DTSTART;TZID=Europe/Paris:20261023T023000\nRRULE:FREQ=DAILY;COUNT=4\nRDATE;TZID=Europe/Paris:20260329T023000|10|- => 2026-03-29T01:30:00.000Z 2026-10-23T00:30:00.000Z 2026-10-24T00:30:00.000Z 2026-10-25T00:30:00.000Z 2026-10-26T01:30:00.000Z
+rrule|-|DTSTART;TZID=Europe/Zurich:20260323T090000\nRRULE:FREQ=WEEKLY;UNTIL=20260406T090000;BYDAY=MO|10|- => 2026-03-23T08:00:00.000Z 2026-03-30T07:00:00.000Z 2026-04-06T07:00:00.000Z
+rrule|-|DTSTART;TZID=Europe/Zurich:20260323T090000\nRRULE:FREQ=WEEKLY;UNTIL=20260406T065959Z;BYDAY=MO|10|- => 2026-03-23T08:00:00.000Z 2026-03-30T07:00:00.000Z
+rrule|-|DTSTART;TZID=Europe/Zurich:20260323T090000\nRRULE:FREQ=WEEKLY;UNTIL=2026-04-06T07:00:00Z;BYDAY=MO|10|- => 2026-03-23T08:00:00.000Z 2026-03-30T07:00:00.000Z 2026-04-06T07:00:00.000Z
+rrule|-|DTSTART;TZID=Europe/Zurich:20260323T090000\nRRULE:FREQ=WEEKLY;UNTIL=20260406;BYDAY=MO|10|- => 2026-03-23T08:00:00.000Z 2026-03-30T07:00:00.000Z 2026-04-06T07:00:00.000Z
+rrule|-|DTSTART:20260323T080000Z\nRRULE:FREQ=WEEKLY;COUNT=3|10|Europe/Zurich => 2026-03-23T08:00:00.000Z 2026-03-30T07:00:00.000Z 2026-04-06T07:00:00.000Z
+rrule|-|DTSTART:20260323T080000\nRRULE:FREQ=WEEKLY;COUNT=3|10|Europe/Zurich => 2026-03-23T07:00:00.000Z 2026-03-30T06:00:00.000Z 2026-04-06T06:00:00.000Z
+rrule|2026-10-25T00:30:00Z|FREQ=SECONDLY;INTERVAL=1800;COUNT=4|10|Europe/Paris => 2026-10-25T00:30:00.000Z 2026-10-25T02:00:00.000Z 2026-10-25T02:30:00.000Z 2026-10-25T03:00:00.000Z
+rrule|2018-11-02T03:00:00Z|FREQ=DAILY;COUNT=4|10|America/Sao_Paulo => 2018-11-02T03:00:00.000Z 2018-11-03T03:00:00.000Z 2018-11-04T03:00:00.000Z 2018-11-05T02:00:00.000Z
+rrule|2011-12-28T22:00:00Z|FREQ=DAILY;COUNT=4|10|Pacific/Apia => 2011-12-28T22:00:00.000Z 2011-12-29T22:00:00.000Z 2011-12-30T22:00:00.000Z 2011-12-31T22:00:00.000Z
+rrule|2026-04-03T15:30:00Z|FREQ=DAILY;COUNT=3|10|Australia/Lord_Howe => 2026-04-03T15:30:00.000Z 2026-04-04T16:00:00.000Z 2026-04-05T16:00:00.000Z
+
+# Recurrences on leap years, month ends, ISO weeks and the year range
+rrule|2024-02-29T09:00:00Z|FREQ=YEARLY;COUNT=3|10|- => 2024-02-29T09:00:00.000Z 2028-02-29T09:00:00.000Z 2032-02-29T09:00:00.000Z
+rrule|2024-02-29T09:00:00Z|FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;COUNT=3|10|- => 2024-02-29T09:00:00.000Z 2028-02-29T09:00:00.000Z 2032-02-29T09:00:00.000Z
+rrule|2026-01-31T09:00:00Z|FREQ=MONTHLY;COUNT=5|10|- => 2026-01-31T09:00:00.000Z 2026-03-31T09:00:00.000Z 2026-05-31T09:00:00.000Z 2026-07-31T09:00:00.000Z 2026-08-31T09:00:00.000Z
+rrule|2026-01-31T09:00:00Z|FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=5|10|- => 2026-01-31T09:00:00.000Z 2026-02-28T09:00:00.000Z 2026-03-31T09:00:00.000Z 2026-04-30T09:00:00.000Z 2026-05-31T09:00:00.000Z
+rrule|2024-01-30T09:00:00Z|FREQ=MONTHLY;BYMONTHDAY=30,-1;COUNT=5|10|- => 2024-01-30T09:00:00.000Z 2024-01-31T09:00:00.000Z 2024-02-29T09:00:00.000Z 2024-03-30T09:00:00.000Z 2024-03-31T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=YEARLY;BYWEEKNO=53;BYDAY=MO;COUNT=3|10|- => 2026-12-28T09:00:00.000Z 2032-12-27T09:00:00.000Z 2037-12-28T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=YEARLY;BYWEEKNO=-1;BYDAY=SU;COUNT=3|10|- => 2027-01-03T09:00:00.000Z 2028-01-02T09:00:00.000Z 2028-12-31T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=YEARLY;BYWEEKNO=1;WKST=SU;BYDAY=SU;COUNT=3|10|- => 2026-01-04T09:00:00.000Z 2027-01-03T09:00:00.000Z 2028-01-02T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=YEARLY;BYYEARDAY=60,366;COUNT=4|10|- => 2026-03-01T09:00:00.000Z 2027-03-01T09:00:00.000Z 2028-02-29T09:00:00.000Z 2028-12-31T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=MONTHLY;BYDAY=5FR;COUNT=4|10|- => 2026-01-30T09:00:00.000Z 2026-05-29T09:00:00.000Z 2026-07-31T09:00:00.000Z 2026-10-30T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=YEARLY;BYDAY=53TH;COUNT=3|10|- => 2026-12-31T09:00:00.000Z 2032-12-30T09:00:00.000Z 2037-12-31T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=YEARLY;BYMONTH=2;BYDAY=-1MO,1TU;COUNT=4|10|- => 2026-02-03T09:00:00.000Z 2026-02-23T09:00:00.000Z 2027-02-02T09:00:00.000Z 2027-02-22T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=WEEKLY;INTERVAL=2;WKST=SU;BYDAY=TU,SU;COUNT=6|10|- => 2026-01-11T09:00:00.000Z 2026-01-13T09:00:00.000Z 2026-01-25T09:00:00.000Z 2026-01-27T09:00:00.000Z 2026-02-08T09:00:00.000Z 2026-02-10T09:00:00.000Z
+rrule|2026-01-01T09:00:00.250Z|FREQ=DAILY;BYHOUR=9,17;BYMINUTE=0,30;COUNT=5|10|- => 2026-01-01T09:00:00.250Z 2026-01-01T09:30:00.250Z 2026-01-01T17:00:00.250Z 2026-01-01T17:30:00.250Z 2026-01-02T09:00:00.250Z
+rrule|2026-01-01T09:00:00Z|FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;COUNT=4|10|- => 2026-01-30T09:00:00.000Z 2026-02-27T09:00:00.000Z 2026-03-31T09:00:00.000Z 2026-04-30T09:00:00.000Z
+rrule|9998-06-01T00:00:00Z|FREQ=YEARLY;COUNT=5|10|- => 9998-06-01T00:00:00.000Z 9999-06-01T00:00:00.000Z
+rrule|9999-12-27T00:00:00Z|FREQ=DAILY;COUNT=10|20|- => 9999-12-27T00:00:00.000Z 9999-12-28T00:00:00.000Z 9999-12-29T00:00:00.000Z 9999-12-30T00:00:00.000Z 9999-12-31T00:00:00.000Z
+rrule|9999-12-31T22:00:00Z|FREQ=HOURLY;COUNT=5|10|- => 9999-12-31T22:00:00.000Z 9999-12-31T23:00:00.000Z
+rrule|0000-01-01T00:00:00Z|FREQ=DAILY;COUNT=2|10|- => 0000-01-01T00:00:00.000Z 0000-01-02T00:00:00.000Z
+rrule|0000-01-01T00:00:00Z|FREQ=WEEKLY;BYDAY=MO;COUNT=2|10|- => 0000-01-03T00:00:00.000Z 0000-01-10T00:00:00.000Z
+rrule|-|DTSTART:20260101T090000Z\nRRULE:FREQ=DAILY;COUNT=2;UNTIL=x|10|- => ERR Invalid UNTIL value: x
+rrule|2026-01-01T09:00:00Z|FREQ=DAILY;UNTIL=2026-01-03|10|- => 2026-01-01T09:00:00.000Z 2026-01-02T09:00:00.000Z
+rrule|2026-01-01T09:00:00Z|FREQ=DAILY;UNTIL=2026-01-03 09:00:00|10|- => 2026-01-01T09:00:00.000Z 2026-01-02T09:00:00.000Z 2026-01-03T09:00:00.000Z
+rrule|-|DTSTART;TZID=Nowhere/City:20260101T090000\nRRULE:FREQ=DAILY;COUNT=2|10|- => ERR Unknown IANA timezone: 'Nowhere/City'
+rrule|-|DTSTART;TZID=europe/paris:20260101T090000\nRRULE:FREQ=DAILY;COUNT=2|10|- => ERR Unknown IANA timezone: 'europe/paris'
+rrule|-|DTSTART:20260230T090000\nRRULE:FREQ=DAILY;COUNT=2|10|- => ERR Invalid DTSTART value: 20260230T090000
+rrule|-|DTSTART:20260101T246000\nRRULE:FREQ=DAILY;COUNT=2|10|- => ERR Invalid DTSTART value: 20260101T246000
+
+# Holidays and the Easter date
+easter_date|2026 => 2026-04-05
+easter_date|1583 => 1583-04-10
+easter_date|9999 => 9999-03-28
+easter_date|1582 => ERR E_CHRONOS_INVALID_YEAR: the Gregorian Easter date is computed for years 1583-9999, got 1582
+easter_date|10000 => ERR E_CHRONOS_INVALID_YEAR: the Gregorian Easter date is computed for years 1583-9999, got 10000
+holidays|2026|FR|- => 2026-01-01 new_year, 2026-04-06 easter_monday, 2026-05-01 labour_day, 2026-05-08 victory_in_europe, 2026-05-14 ascension, 2026-05-25 whit_monday, 2026-07-14 national_day, 2026-08-15 assumption, 2026-11-01 all_saints, 2026-11-11 armistice, 2026-12-25 christmas
+holidays|2027|CH|GL => 2027-01-01 new_year, 2027-01-02 saint_berchtold, 2027-03-26 good_friday, 2027-03-29 easter_monday, 2027-04-01 naefelser_fahrt, 2027-05-06 ascension, 2027-05-17 whit_monday, 2027-08-01 national_day, 2027-11-01 all_saints, 2027-12-25 christmas, 2027-12-26 saint_stephen
+holidays|2023|CH|GL => 2023-01-01 new_year, 2023-01-02 saint_berchtold, 2023-04-07 good_friday, 2023-04-10 easter_monday, 2023-04-13 naefelser_fahrt, 2023-05-18 ascension, 2023-05-29 whit_monday, 2023-08-01 national_day, 2023-11-01 all_saints, 2023-12-25 christmas, 2023-12-26 saint_stephen
+holidays|2026|CH|NE => 2026-01-01 new_year, 2026-03-01 republic_day, 2026-04-03 good_friday, 2026-04-06 easter_monday, 2026-05-01 labour_day, 2026-05-14 ascension, 2026-05-25 whit_monday, 2026-06-04 corpus_christi, 2026-08-01 national_day, 2026-09-21 federal_fast_monday, 2026-12-25 christmas
+holidays|2026|CH|- => 2026-01-01 new_year, 2026-08-01 national_day, 2026-12-25 christmas
+holidays|2026|DE|- => ERR E_CHRONOS_UNKNOWN_COUNTRY: country 'DE' has no holiday calendar; known: CH, FR
+is_holiday|2026-07-14|FR|- => true
+is_holiday|2026-07-15|FR|- => false
+is_holiday|2027-04-01|CH|GL => true
+is_holiday|2026-7-14|FR|- => ERR E_CHRONOS_INVALID_DATE: '2026-7-14' is not a calendar date (YYYY-MM-DD)
+is_holiday|+026-07-14|FR|- => ERR E_CHRONOS_INVALID_YEAR: the Gregorian Easter date is computed for years 1583-9999, got 26
+is_holiday| 026-07-14|FR|- => ERR E_CHRONOS_INVALID_YEAR: the Gregorian Easter date is computed for years 1583-9999, got 26
+is_holiday|2026-02-30|FR|- => ERR E_CHRONOS_INVALID_DATE: '2026-02-30' is not a calendar date (YYYY-MM-DD)
+is_holiday|2026-07-14 |FR|- => ERR E_CHRONOS_INVALID_DATE: '2026-07-14 ' is not a calendar date (YYYY-MM-DD)
+is_holiday|2026/07/14|FR|- => ERR E_CHRONOS_INVALID_DATE: '2026/07/14' is not a calendar date (YYYY-MM-DD)
+
+# A leap second is not a time the engine holds
+## Read as 23:59:60 by the engine's first date library, which the TypeScript API
+## then refused anyway; the 60th second now fails where it is read.
+add|2016-12-31T23:59:60Z|0|second => ERR Invalid ISO date-time: 2016-12-31T23:59:60Z
+format|2026-04-08T14:05:60Z|ss => ERR Invalid ISO date-time: 2026-04-08T14:05:60Z
+from_local|2026-03-29T02:30:60|Europe/Paris => ERR Invalid naive datetime '2026-03-29T02:30:60': input contains invalid characters
+parse_rfc2822|Sat, 31 Dec 2016 23:59:60 +0000 => ERR Invalid RFC 2822 date: Sat, 31 Dec 2016 23:59:60 +0000 (input is out of range)
+parse_http|Sun Nov  6 08:49:60 1994 => ERR Invalid HTTP date: Sun Nov  6 08:49:60 1994
+
+# The edge of year 9999
+## What stays inside 0000-9999 is answered; a value in year 10000 is refused
+## rather than written as `+10000-…`, which nothing reads back.
+end_of_in_zone|9999-12-31T12:00:00Z|year|Europe/Paris => 9999-12-31T22:59:59.999Z
+end_of_in_zone|9999-12-31T12:00:00Z|month|UTC => 9999-12-31T23:59:59.999Z
+end_of_in_zone|9999-12-31T09:59:59.500Z|second|Asia/Tokyo => 9999-12-31T09:59:59.999Z
+diff|9999-06-01T00:00:00Z|9999-01-01T00:00:00Z|years => 0.4136986301369863
+diff|9999-12-31T12:00:00Z|9999-12-30T00:00:00Z|days => 1.5
+diff_in_zone|9999-12-31T12:00:00Z|9999-01-31T00:00:00Z|months|UTC => 11.016129032258064
+diff_in_zone|9999-12-31T23:59:59.999Z|0000-01-01T00:00:00Z|years|America/New_York => 9999.999992453038
+add|0000-01-01T00:00:00Z|3652058|days => 9998-12-30T00:00:00.000Z
+add|9999-12-31T00:00:00Z|-3652424|days => 0000-01-01T00:00:00.000Z
+rrule|9999-12-27T00:00:00Z|FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;COUNT=10|20|- => 9999-12-27T00:00:00.000Z 9999-12-28T00:00:00.000Z 9999-12-29T00:00:00.000Z 9999-12-30T00:00:00.000Z 9999-12-31T00:00:00.000Z
+end_of|9999-12-28T12:00:00Z|week => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+end_of_in_zone|9999-12-31T09:59:59.500Z|day|America/New_York => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+to_zone|9999-12-31T20:00:00Z|Asia/Tokyo => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+from_local|9999-12-31T23:59:59|America/New_York => ERR Date arithmetic result is out of range: years are limited to 0000-9999
+parse_rfc2822|31 Dec 9999 23:59:59 -0001 => ERR Invalid RFC 2822 date: 31 Dec 9999 23:59:59 -0001 (input is out of range)
+parse_rfc2822|1 Jan 12345 00:00:00 +0000 => ERR Invalid RFC 2822 date: 1 Jan 12345 00:00:00 +0000 (input is out of range)
+
+# Changes of time after 2099
+## A zone keeps its standing rule forever: Paris still springs forward on the
+## last Sunday of March 2100. (The previous time zone data stopped at 2099 and
+## froze every zone in whatever offset it then had.)
+zone_offset|2100-07-01T12:00:00Z|Europe/Paris => 120
+zone_offset|9999-07-01T12:00:00Z|America/New_York => -240
+to_zone|2100-03-28T00:59:59Z|Europe/Paris => 2100-03-28T01:59:59+01:00 60 Europe/Paris
+to_zone|2100-03-28T01:00:00Z|Europe/Paris => 2100-03-28T03:00:00+02:00 120 Europe/Paris
+from_local|2100-10-31T02:30:00|Europe/Paris => 2100-10-31T00:30:00.000Z
+rrule|2100-03-26T08:00:00Z|FREQ=DAILY;COUNT=4|10|Europe/Paris => 2100-03-26T08:00:00.000Z 2100-03-27T08:00:00.000Z 2100-03-28T07:00:00.000Z 2100-03-29T07:00:00.000Z

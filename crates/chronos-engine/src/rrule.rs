@@ -18,12 +18,20 @@
 //! - A step budget turns what is left (a sub-daily rule whose interval almost
 //!   never meets its BY* parts) into an error instead of a frozen thread.
 
-use chrono::{
-    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
-};
-use chrono_tz::Tz;
+//!
+//! Instants are UTC wall clocks ([`DateTime`]), dates are counted as days from
+//! 1970-01-01 where the iteration needs arithmetic on them, and the days a
+//! year's mask runs into the next one are simply not candidates past
+//! 9999-12-31.
 
-use crate::{fix_offset, offset_seconds_at, parse_iso, to_iso};
+use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::TimeZone;
+use jiff::SignedDuration;
+
+use crate::{
+    clock_text, fix_offset, local_clock, local_time, lookup_zone, offset_seconds_at, parse_iso,
+    to_iso, LocalTime,
+};
 
 const MAX_YEAR: i32 = 9999;
 /// Longest rule text accepted. Every BY* list fits well inside it once written
@@ -56,12 +64,12 @@ enum Freq {
 
 #[derive(Clone, Copy, Debug)]
 enum Until {
-    /// `YYYYMMDDTHHMMSSZ` or an RFC 3339 instant.
-    Instant(DateTime<Utc>),
+    /// `YYYYMMDDTHHMMSSZ` or an RFC 3339 instant, as its UTC wall clock.
+    Instant(DateTime),
     /// `YYYYMMDDTHHMMSS`: a wall-clock time in the rule's zone.
-    Local(NaiveDateTime),
+    Local(DateTime),
     /// `YYYYMMDD`: every occurrence on that date is included.
-    Date(NaiveDate),
+    Date(Date),
 }
 
 #[derive(Default)]
@@ -83,15 +91,15 @@ struct RawRule {
 }
 
 struct DtStartLine {
-    value: NaiveDateTime,
+    value: DateTime,
     utc: bool,
-    tzid: Option<Tz>,
+    tzid: Option<TimeZone>,
 }
 
 /// One `EXDATE` or `RDATE` line: its date-times, and the zone they are read in.
 struct DateListLine {
-    values: Vec<(NaiveDateTime, bool)>,
-    tzid: Option<Tz>,
+    values: Vec<(DateTime, bool)>,
+    tzid: Option<TimeZone>,
 }
 
 /// What a rule text holds: the rule, its start if it names one, and the
@@ -177,40 +185,38 @@ pub fn expand(
         }
         (Some(iso), None) => {
             let instant = parse_iso(iso)?;
-            let local = match option_zone {
-                Some(tz) => instant.with_timezone(&tz).naive_local(),
-                None => instant.naive_utc(),
+            let local = match &option_zone {
+                Some(tz) => local_clock(tz, instant),
+                None => Some(instant),
             };
             (local, option_zone)
         }
         (None, Some(line)) => {
             let zone = match (line.tzid, option_zone) {
-                (Some(a), Some(b)) if a != b => {
+                (Some(a), Some(b)) if a.iana_name() != b.iana_name() => {
                     return Err(format!(
                         "DTSTART names the zone {} but the tzid option is {}",
-                        a.name(),
-                        b.name()
+                        a.iana_name().unwrap_or_default(),
+                        b.iana_name().unwrap_or_default()
                     ))
                 }
                 (Some(a), _) => Some(a),
                 (None, b) => b,
             };
-            let local = match (line.utc, zone) {
-                (true, Some(tz)) => Utc
-                    .from_utc_datetime(&line.value)
-                    .with_timezone(&tz)
-                    .naive_local(),
-                _ => line.value,
+            let local = match (line.utc, &zone) {
+                (true, Some(tz)) => local_clock(tz, line.value),
+                _ => Some(line.value),
             };
             (local, zone)
         }
     };
-    if !(0..=MAX_YEAR).contains(&dtstart.year()) {
-        return Err(format!(
-            "RRULE start year {} is outside 0000-9999",
-            dtstart.year()
-        ));
-    }
+    // A start whose wall clock no value holds is one in year 10000: the UTC
+    // start is at most 9999-12-31 and an offset is less than a day.
+    let year = dtstart.map_or(MAX_YEAR + 1, |d| i32::from(d.year()));
+    let dtstart = match dtstart {
+        Some(d) if (0..=MAX_YEAR).contains(&year) => d,
+        _ => return Err(format!("RRULE start year {} is outside 0000-9999", year)),
+    };
 
     let rule = normalize(raw, dtstart)?;
     let limit = if limit == 0 {
@@ -218,8 +224,8 @@ pub fn expand(
     } else {
         limit.min(MAX_OCCURRENCES)
     };
-    let excluded = resolve_dates(&exdates, zone, "EXDATE")?;
-    let added = resolve_dates(&rdates, zone, "RDATE")?;
+    let excluded = resolve_dates(&exdates, zone.as_ref(), "EXDATE")?;
+    let added = resolve_dates(&rdates, zone.as_ref(), "RDATE")?;
     let mut expander = Expander {
         rule: &rule,
         dtstart,
@@ -244,7 +250,7 @@ pub fn expand(
     // RFC 5545 §3.8.5: the set is the rule's occurrences and the RDATEs,
     // without the EXDATEs — which remove an RDATE as well. COUNT and UNTIL
     // bound the rule alone.
-    let mut set: Vec<DateTime<Utc>> = expander
+    let mut set: Vec<DateTime> = expander
         .out
         .into_iter()
         .chain(added)
@@ -260,19 +266,21 @@ pub fn expand(
 /// a floating one on its line's zone, or the rule's, or UTC.
 fn resolve_dates(
     lines: &[DateListLine],
-    zone: Option<Tz>,
+    zone: Option<&TimeZone>,
     property: &str,
-) -> Result<std::collections::BTreeSet<DateTime<Utc>>, String> {
+) -> Result<std::collections::BTreeSet<DateTime>, String> {
     let mut out = std::collections::BTreeSet::new();
     for line in lines {
         for &(value, utc) in &line.values {
             let instant = if utc {
-                Some(Utc.from_utc_datetime(&value))
+                Some(value)
             } else {
-                resolve(line.tzid.or(zone), value)
+                resolve(line.tzid.as_ref().or(zone), value)
             };
             out.insert(
-                instant.ok_or_else(|| format!("Cannot resolve the {} {}", property, value))?,
+                instant.ok_or_else(|| {
+                    format!("Cannot resolve the {} {}", property, clock_text(value))
+                })?,
             );
         }
     }
@@ -282,15 +290,14 @@ fn resolve_dates(
 /// The instant a wall-clock time names in a zone: RFC 5545 §3.3.5 takes the
 /// first of two ambiguous times, and reads a time that does not exist with
 /// the offset in force before the gap (02:30 becomes 03:30).
-fn resolve(zone: Option<Tz>, local: NaiveDateTime) -> Option<DateTime<Utc>> {
+fn resolve(zone: Option<&TimeZone>, local: DateTime) -> Option<DateTime> {
     match zone {
-        None => Some(Utc.from_utc_datetime(&local)),
-        Some(tz) => match tz.from_local_datetime(&local) {
-            LocalResult::Single(dt) => Some(dt.with_timezone(&Utc)),
-            LocalResult::Ambiguous(a, b) => Some(a.min(b).with_timezone(&Utc)),
-            LocalResult::None => {
+        None => Some(local),
+        Some(tz) => match local_time(tz, local) {
+            LocalTime::Single(utc) | LocalTime::Ambiguous(utc) => Some(utc),
+            LocalTime::Gap => {
                 let guess = offset_seconds_at(tz, local);
-                fix_offset(local, guess, tz).map(|utc| Utc.from_utc_datetime(&utc))
+                fix_offset(local, guess, tz)
             }
         },
     }
@@ -298,10 +305,8 @@ fn resolve(zone: Option<Tz>, local: NaiveDateTime) -> Option<DateTime<Utc>> {
 
 // ─── Parsing ────────────────────────────────────────────────────────────────
 
-fn parse_zone(name: &str) -> Result<Tz, String> {
-    name.trim()
-        .parse::<Tz>()
-        .map_err(|_| format!("Unknown IANA timezone: '{}'", name))
+fn parse_zone(name: &str) -> Result<TimeZone, String> {
+    lookup_zone(name.trim()).ok_or_else(|| format!("Unknown IANA timezone: '{}'", name))
 }
 
 fn parse_text(text: &str) -> Result<Parsed, String> {
@@ -478,24 +483,21 @@ fn parse_dtstart(rest: &str) -> Result<DtStartLine, String> {
 
 /// RFC 5545 basic form: `YYYYMMDD`, `YYYYMMDDTHHMMSS` or `YYYYMMDDTHHMMSSZ`.
 /// Returns the wall-clock value and whether it was UTC.
-fn parse_basic_datetime(value: &str) -> Option<(NaiveDateTime, bool)> {
+fn parse_basic_datetime(value: &str) -> Option<(DateTime, bool)> {
     let bytes = value.as_bytes();
-    let digits = |range: std::ops::Range<usize>| -> Option<u32> {
+    let digits = |range: std::ops::Range<usize>| -> Option<i16> {
         let slice = bytes.get(range)?;
         if !slice.iter().all(u8::is_ascii_digit) {
             return None;
         }
         slice
             .iter()
-            .try_fold(0u32, |acc, b| Some(acc * 10 + u32::from(b - b'0')))
+            .try_fold(0i16, |acc, b| Some(acc * 10 + i16::from(b - b'0')))
     };
-    let date = NaiveDate::from_ymd_opt(
-        i32::try_from(digits(0..4)?).ok()?,
-        digits(4..6)?,
-        digits(6..8)?,
-    )?;
+    let pair = |range: std::ops::Range<usize>| -> Option<i8> { i8::try_from(digits(range)?).ok() };
+    let date = Date::new(digits(0..4)?, pair(4..6)?, pair(6..8)?).ok()?;
     match bytes.len() {
-        8 => Some((date.and_hms_opt(0, 0, 0)?, false)),
+        8 => Some((date.to_datetime(Time::midnight()), false)),
         15 | 16 => {
             if bytes[8] != b'T' && bytes[8] != b't' {
                 return None;
@@ -505,8 +507,8 @@ fn parse_basic_datetime(value: &str) -> Option<(NaiveDateTime, bool)> {
                 Some(b'Z') | Some(b'z') => true,
                 Some(_) => return None,
             };
-            let time = date.and_hms_opt(digits(9..11)?, digits(11..13)?, digits(13..15)?)?;
-            Some((time, utc))
+            let time = Time::new(pair(9..11)?, pair(11..13)?, pair(13..15)?, 0).ok()?;
+            Some((date.to_datetime(time), utc))
         }
         _ => None,
     }
@@ -517,7 +519,7 @@ fn parse_until(value: &str) -> Result<Until, String> {
         return Ok(if value.len() == 8 {
             Until::Date(naive.date())
         } else if utc {
-            Until::Instant(Utc.from_utc_datetime(&naive))
+            Until::Instant(naive)
         } else {
             Until::Local(naive)
         });
@@ -691,7 +693,7 @@ fn checked_set(
     Ok(out)
 }
 
-fn normalize(raw: RawRule, dtstart: NaiveDateTime) -> Result<Rule, String> {
+fn normalize(raw: RawRule, dtstart: DateTime) -> Result<Rule, String> {
     let freq = raw.freq.ok_or_else(|| "RRULE missing FREQ".to_string())?;
     let interval = raw.interval.unwrap_or(1);
     if interval < 1 {
@@ -714,12 +716,12 @@ fn normalize(raw: RawRule, dtstart: NaiveDateTime) -> Result<Rule, String> {
         match freq {
             Freq::Yearly => {
                 if bymonth.is_empty() {
-                    bymonth = vec![dtstart.month() as i32];
+                    bymonth = vec![i32::from(dtstart.month())];
                 }
-                bymonthday = vec![dtstart.day() as i32];
+                bymonthday = vec![i32::from(dtstart.day())];
             }
-            Freq::Monthly => bymonthday = vec![dtstart.day() as i32],
-            Freq::Weekly => byday = vec![(None, dtstart.weekday().num_days_from_monday())],
+            Freq::Monthly => bymonthday = vec![i32::from(dtstart.day())],
+            Freq::Weekly => byday = vec![(None, weekday_index(dtstart.date()))],
             _ => {}
         }
     }
@@ -764,13 +766,13 @@ fn normalize(raw: RawRule, dtstart: NaiveDateTime) -> Result<Rule, String> {
     let mut byminute = as_u32(byminute);
     let mut bysecond = as_u32(bysecond);
     if byhour.is_empty() && freq < Freq::Hourly {
-        byhour = vec![dtstart.hour()];
+        byhour = vec![clock_field(dtstart.hour())];
     }
     if byminute.is_empty() && freq < Freq::Minutely {
-        byminute = vec![dtstart.minute()];
+        byminute = vec![clock_field(dtstart.minute())];
     }
     if bysecond.is_empty() && freq < Freq::Secondly {
-        bysecond = vec![dtstart.second()];
+        bysecond = vec![clock_field(dtstart.second())];
     }
 
     Ok(Rule {
@@ -812,11 +814,46 @@ fn pymod(a: i64, b: i64) -> i64 {
     a.rem_euclid(b)
 }
 
+/// Day 0 of the day numbers below. jiff counts dates from this one itself, so
+/// every date from -9999 to 9999 is a duration it accepts from here.
+const DAY_ZERO: Date = Date::constant(1970, 1, 1);
+
+/// Days from 1970-01-01.
+fn day_number(date: Date) -> i64 {
+    date.duration_since(DAY_ZERO).as_hours() / 24
+}
+
+/// The date `days` days from 1970-01-01; `None` outside years -9999 to 9999.
+fn date_of_day(days: i64) -> Option<Date> {
+    let hours = days.checked_mul(24)?;
+    DAY_ZERO.checked_add(SignedDuration::from_hours(hours)).ok()
+}
+
+/// The date `days` days after `from`.
+fn days_after(from: Date, days: i64) -> Option<Date> {
+    date_of_day(day_number(from).checked_add(days)?)
+}
+
+/// Weekday, 0 = Monday.
+fn weekday_index(date: Date) -> u32 {
+    u32::from(date.weekday().to_monday_zero_offset().unsigned_abs())
+}
+
+/// Day of the year, 0-based.
+fn ordinal0(date: Date) -> usize {
+    usize::from(date.day_of_year().unsigned_abs()) - 1
+}
+
+/// An hour, minute or second as the rule stores it.
+fn clock_field(value: i8) -> u32 {
+    u32::from(value.unsigned_abs())
+}
+
 struct YearInfo {
     year: i32,
     yearlen: usize,
-    /// Days from the common era of January 1st.
-    yearordinal: i32,
+    /// Day number of January 1st.
+    yearordinal: i64,
     /// Weekday of January 1st, 0 = Monday.
     yearweekday: i64,
     /// Whether day `i` of the year (0-based, running 7 days into the next year
@@ -826,10 +863,10 @@ struct YearInfo {
 
 impl YearInfo {
     fn build(year: i32, rule: &Rule) -> Option<YearInfo> {
-        let jan1 = NaiveDate::from_ymd_opt(year, 1, 1)?;
+        let jan1 = Date::new(i16::try_from(year).ok()?, 1, 1).ok()?;
         let yearlen = year_len(year) as usize;
-        let yearordinal = jan1.num_days_from_ce();
-        let yearweekday = i64::from(jan1.weekday().num_days_from_monday());
+        let yearordinal = day_number(jan1);
+        let yearweekday = i64::from(weekday_index(jan1));
         let len = yearlen + 7;
         let wday = |i: i64| pymod(yearweekday + i, 7);
 
@@ -841,9 +878,10 @@ impl YearInfo {
         let nwdaymask = if rule.has_nweekday && rule.freq <= Freq::Monthly {
             let mut ranges: Vec<(i64, i64)> = Vec::new();
             let month_start = |m: u32| -> i64 {
-                NaiveDate::from_ymd_opt(year, m, 1)
-                    .map(|d| i64::from(d.ordinal0()))
-                    .unwrap_or(yearlen as i64)
+                i8::try_from(m)
+                    .ok()
+                    .and_then(|m| jan1.with().month(m).build().ok())
+                    .map_or(yearlen as i64, |d| ordinal0(d) as i64)
             };
             let month_end = |m: u32| -> i64 {
                 if m == 12 {
@@ -884,10 +922,13 @@ impl YearInfo {
             None
         };
 
+        // Walked a day at a time, without a date per day. The week that
+        // straddles the end of 9999 has no candidates past it.
+        let mut day = Day::first_of(year, weekday_index(jan1));
         let mut pass = Vec::with_capacity(len);
         for i in 0..len {
-            let date = NaiveDate::from_num_days_from_ce_opt(yearordinal + i as i32)?;
-            pass.push(day_passes(rule, date, i, &wnomask, &nwdaymask));
+            pass.push(day.year <= MAX_YEAR && day_passes(rule, &day, i, &wnomask, &nwdaymask));
+            day = day.next();
         }
         Some(YearInfo {
             year,
@@ -898,8 +939,8 @@ impl YearInfo {
         })
     }
 
-    fn date(&self, i: usize) -> Option<NaiveDate> {
-        NaiveDate::from_num_days_from_ce_opt(self.yearordinal + i as i32)
+    fn date(&self, i: usize) -> Option<Date> {
+        date_of_day(self.yearordinal + i as i64)
     }
 
     fn weekday(&self, i: usize) -> u32 {
@@ -907,14 +948,69 @@ impl YearInfo {
     }
 }
 
+/// The calendar fields of one day, as the year mask reads them.
+#[derive(Clone, Copy)]
+struct Day {
+    year: i32,
+    month: u32,
+    day: u32,
+    days_in_month: u32,
+    /// 0 = Monday.
+    weekday: u32,
+    /// Day of the year, 1-based.
+    ordinal: i32,
+}
+
+impl Day {
+    fn first_of(year: i32, weekday: u32) -> Day {
+        Day {
+            year,
+            month: 1,
+            day: 1,
+            days_in_month: 31,
+            weekday,
+            ordinal: 1,
+        }
+    }
+
+    fn next(self) -> Day {
+        let mut next = Day {
+            weekday: (self.weekday + 1) % 7,
+            day: self.day + 1,
+            ordinal: self.ordinal + 1,
+            ..self
+        };
+        if next.day > self.days_in_month {
+            next.day = 1;
+            next.month += 1;
+            if next.month > 12 {
+                next.month = 1;
+                next.year += 1;
+                next.ordinal = 1;
+            }
+            next.days_in_month = days_in_month(next.year, next.month);
+        }
+        next
+    }
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        _ if is_leap(year) => 29,
+        _ => 28,
+    }
+}
+
 fn day_passes(
     rule: &Rule,
-    date: NaiveDate,
+    date: &Day,
     i: usize,
     wnomask: &Option<Vec<bool>>,
     nwdaymask: &Option<Vec<bool>>,
 ) -> bool {
-    if rule.bymonth != 0 && rule.bymonth & (1 << date.month()) == 0 {
+    if rule.bymonth != 0 && rule.bymonth & (1 << date.month) == 0 {
         return false;
     }
     if let Some(mask) = wnomask {
@@ -923,7 +1019,7 @@ fn day_passes(
         }
     }
     if rule.has_byday() {
-        let plain = rule.byweekday & (1 << date.weekday().num_days_from_monday()) != 0;
+        let plain = rule.byweekday & (1 << date.weekday) != 0;
         let nth = nwdaymask
             .as_ref()
             .is_some_and(|m| m.get(i).copied().unwrap_or(false));
@@ -934,15 +1030,15 @@ fn day_passes(
         }
     }
     if rule.bymonthday != 0 || rule.bynmonthday != 0 {
-        let day = date.day();
-        let from_end = days_in_month(date.year(), date.month()) - day + 1;
+        let day = date.day;
+        let from_end = date.days_in_month - day + 1;
         if rule.bymonthday & (1 << day) == 0 && rule.bynmonthday & (1 << from_end) == 0 {
             return false;
         }
     }
     if !rule.byyearday.is_empty() {
-        let ordinal = date.ordinal() as i32;
-        let negative = ordinal - year_len(date.year()) - 1;
+        let ordinal = date.ordinal;
+        let negative = ordinal - year_len(date.year) - 1;
         if rule.byyearday.binary_search(&ordinal).is_err()
             && rule.byyearday.binary_search(&negative).is_err()
         {
@@ -950,15 +1046,6 @@ fn day_passes(
         }
     }
     true
-}
-
-fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        _ if is_leap(year) => 29,
-        _ => 28,
-    }
 }
 
 /// BYWEEKNO marks, as rrule.js and dateutil compute them (weeks start on WKST
@@ -1025,9 +1112,10 @@ fn build_wnomask(year: i32, yearlen: usize, yearweekday: i64, rule: &Rule) -> Ve
     if no1wkst != 0 {
         // The days before week 1 belong to the last week of the previous year.
         let lnumweeks = if rule.byweekno.binary_search(&-1).is_err() {
-            let lyearweekday = NaiveDate::from_ymd_opt(year - 1, 1, 1)
-                .map(|d| i64::from(d.weekday().num_days_from_monday()))
-                .unwrap_or(0);
+            let lyearweekday = i16::try_from(year - 1)
+                .ok()
+                .and_then(|y| Date::new(y, 1, 1).ok())
+                .map_or(0, |d| i64::from(weekday_index(d)));
             let lno1wkst = pymod(7 - lyearweekday + wkst, 7);
             let lyearlen = i64::from(year_len(year - 1));
             let weekst = if lno1wkst >= 4 {
@@ -1059,12 +1147,13 @@ enum Flow {
 struct Expander<'a> {
     rule: &'a Rule,
     /// DTSTART on the rule's wall clock.
-    dtstart: NaiveDateTime,
-    zone: Option<Tz>,
+    dtstart: DateTime,
+    zone: Option<TimeZone>,
     limit: usize,
     remaining: Option<u64>,
-    out: Vec<DateTime<Utc>>,
-    last: Option<DateTime<Utc>>,
+    /// Occurrences, as UTC wall clocks.
+    out: Vec<DateTime>,
+    last: Option<DateTime>,
     steps: u64,
     year: Option<YearInfo>,
 }
@@ -1096,11 +1185,11 @@ impl Expander<'_> {
     /// The instant a wall-clock occurrence names: RFC 5545 §3.3.5 takes the
     /// first of two ambiguous times, and reads a time that does not exist with
     /// the offset in force before the gap (02:30 becomes 03:30).
-    fn instant(&self, local: NaiveDateTime) -> Option<DateTime<Utc>> {
-        resolve(self.zone, local)
+    fn instant(&self, local: DateTime) -> Option<DateTime> {
+        resolve(self.zone.as_ref(), local)
     }
 
-    fn emit(&mut self, local: NaiveDateTime) -> Result<Flow, String> {
+    fn emit(&mut self, local: DateTime) -> Result<Flow, String> {
         let past_until = match self.rule.until {
             None => false,
             Some(Until::Local(until)) => local > until,
@@ -1115,7 +1204,7 @@ impl Expander<'_> {
         }
         let instant = self
             .instant(local)
-            .ok_or_else(|| format!("Cannot resolve the occurrence {}", local))?;
+            .ok_or_else(|| format!("Cannot resolve the occurrence {}", clock_text(local)))?;
         // Around a DST change two wall-clock times can name the same or an
         // earlier instant; the output stays strictly increasing.
         if self.last.is_some_and(|last| instant <= last) {
@@ -1135,23 +1224,27 @@ impl Expander<'_> {
         Ok(Flow::Continue)
     }
 
-    fn combine(&self, date: NaiveDate, (h, m, s): (u32, u32, u32)) -> Option<NaiveDateTime> {
-        date.and_hms_nano_opt(h, m, s, self.dtstart.nanosecond())
+    fn combine(&self, date: Date, (h, m, s): (u32, u32, u32)) -> Option<DateTime> {
+        let field = |v: u32| i8::try_from(v).ok();
+        let time = Time::new(
+            field(h)?,
+            field(m)?,
+            field(s)?,
+            self.dtstart.subsec_nanosecond(),
+        )
+        .ok()?;
+        Some(date.to_datetime(time))
     }
 
     /// Emit one period: `days` are the dates that passed the calendar parts,
     /// in order, and `times` the period's time set, sorted.
-    fn emit_period(
-        &mut self,
-        days: &[NaiveDate],
-        times: &[(u32, u32, u32)],
-    ) -> Result<Flow, String> {
+    fn emit_period(&mut self, days: &[Date], times: &[(u32, u32, u32)]) -> Result<Flow, String> {
         if days.is_empty() || times.is_empty() {
             return Ok(Flow::Continue);
         }
         if !self.rule.bysetpos.is_empty() {
             let len = times.len() as i64;
-            let mut picked: Vec<NaiveDateTime> = Vec::with_capacity(self.rule.bysetpos.len());
+            let mut picked: Vec<DateTime> = Vec::with_capacity(self.rule.bysetpos.len());
             for &pos in &self.rule.bysetpos {
                 let pos = i64::from(pos);
                 let (daypos, timepos) = if pos < 0 {
@@ -1224,12 +1317,12 @@ impl Expander<'_> {
         let mut year = i64::from(self.dtstart.year());
         let mut month = i64::from(self.dtstart.month());
         let mut week_cursor = self.dtstart.date();
-        let mut days: Vec<NaiveDate> = Vec::with_capacity(373);
+        let mut days: Vec<Date> = Vec::with_capacity(373);
 
         loop {
             self.tick()?;
             let current_year = match rule.freq {
-                Freq::Weekly => week_cursor.year(),
+                Freq::Weekly => i32::from(week_cursor.year()),
                 _ => match i32::try_from(year) {
                     Ok(y) => y,
                     Err(_) => break,
@@ -1242,14 +1335,19 @@ impl Expander<'_> {
             let (start, end) = match rule.freq {
                 Freq::Yearly => (0, info.yearlen),
                 Freq::Monthly => {
-                    let m = month as u32;
-                    let first = NaiveDate::from_ymd_opt(current_year, m, 1)
-                        .ok_or_else(|| "Invalid month while expanding RRULE".to_string())?;
-                    let start = first.ordinal0() as usize;
-                    (start, start + days_in_month(current_year, m) as usize)
+                    let first = match (i16::try_from(current_year), i8::try_from(month)) {
+                        (Ok(y), Ok(m)) => Date::new(y, m, 1).ok(),
+                        _ => None,
+                    }
+                    .ok_or_else(|| "Invalid month while expanding RRULE".to_string())?;
+                    let start = ordinal0(first);
+                    (
+                        start,
+                        start + usize::from(first.days_in_month().unsigned_abs()),
+                    )
                 }
                 _ => {
-                    let start = week_cursor.ordinal0() as usize;
+                    let start = ordinal0(week_cursor);
                     let mut end = start;
                     for _ in 0..7 {
                         end += 1;
@@ -1282,13 +1380,9 @@ impl Expander<'_> {
                     }
                 }
                 _ => {
-                    let back = (7 + i64::from(week_cursor.weekday().num_days_from_monday())
-                        - i64::from(wkst))
-                        % 7;
+                    let back = (7 + i64::from(weekday_index(week_cursor)) - i64::from(wkst)) % 7;
                     let forward = interval.saturating_mul(7).saturating_sub(back);
-                    match Duration::try_days(forward)
-                        .and_then(|d| week_cursor.checked_add_signed(d))
-                    {
+                    match days_after(week_cursor, forward) {
                         Some(next) => week_cursor = next,
                         None => break,
                     }
@@ -1402,12 +1496,13 @@ impl Expander<'_> {
             let Some((date, sod)) = split_seconds(t) else {
                 return Ok(None);
             };
-            if date.year() > MAX_YEAR {
+            let year = i32::from(date.year());
+            if year > MAX_YEAR {
                 return Ok(None);
             }
             let day_start = t - sod;
-            let info = self.year_info(date.year())?;
-            if !info.pass[date.ordinal0() as usize] {
+            let info = self.year_info(year)?;
+            if !info.pass[ordinal0(date)] {
                 let Some(next_day) = self.next_passing_day(date)? else {
                     return Ok(None);
                 };
@@ -1462,9 +1557,9 @@ impl Expander<'_> {
 
     /// The first day after `date` that passes the calendar parts, scanning the
     /// year masks, or `None` past year 9999.
-    fn next_passing_day(&mut self, date: NaiveDate) -> Result<Option<NaiveDate>, String> {
-        let mut year = date.year();
-        let mut from = date.ordinal0() as usize + 1;
+    fn next_passing_day(&mut self, date: Date) -> Result<Option<Date>, String> {
+        let mut year = i32::from(date.year());
+        let mut from = ordinal0(date) + 1;
         while year <= MAX_YEAR {
             let info = self.year_info(year)?;
             if let Some(offset) = info.pass[from.min(info.yearlen)..info.yearlen]
@@ -1488,18 +1583,20 @@ fn gcd(a: i64, b: i64) -> i64 {
     a.max(1)
 }
 
-fn seconds_of_date(date: NaiveDate) -> i64 {
-    i64::from(date.num_days_from_ce()) * SECONDS_PER_DAY
+fn seconds_of_date(date: Date) -> i64 {
+    day_number(date) * SECONDS_PER_DAY
 }
 
-fn seconds_of(dt: NaiveDateTime) -> i64 {
-    seconds_of_date(dt.date()) + i64::from(dt.num_seconds_from_midnight())
+fn seconds_of(dt: DateTime) -> i64 {
+    seconds_of_date(dt.date())
+        + i64::from(dt.hour()) * 3600
+        + i64::from(dt.minute()) * 60
+        + i64::from(dt.second())
 }
 
-fn split_seconds(t: i64) -> Option<(NaiveDate, i64)> {
-    let days = i32::try_from(t.div_euclid(SECONDS_PER_DAY)).ok()?;
+fn split_seconds(t: i64) -> Option<(Date, i64)> {
     Some((
-        NaiveDate::from_num_days_from_ce_opt(days)?,
+        date_of_day(t.div_euclid(SECONDS_PER_DAY))?,
         t.rem_euclid(SECONDS_PER_DAY),
     ))
 }

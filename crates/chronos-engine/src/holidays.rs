@@ -7,7 +7,10 @@
 //! The cantonal table is today's calendar applied to every year asked: it does
 //! not know when a holiday was instituted or dropped.
 
-use chrono::{Datelike, Duration, NaiveDate, Weekday};
+use jiff::civil::{Date, Weekday};
+use jiff::ToSpan;
+
+use crate::grammar;
 
 /// The first year of the Gregorian computus (the reform of October 1582).
 const MIN_YEAR: i32 = 1583;
@@ -22,7 +25,7 @@ pub const SWISS_CANTONS: [&str; 26] = [
 /// One public holiday: its calendar date and the key the application translates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Holiday {
-    pub date: NaiveDate,
+    pub date: Date,
     pub key: &'static str,
 }
 
@@ -37,13 +40,17 @@ fn check_year(year: i32) -> Result<(), String> {
     }
 }
 
-fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
-    // Every (month, day) passed here is a fixed, valid calendar day.
-    NaiveDate::from_ymd_opt(year, month, day).unwrap_or(NaiveDate::MIN)
+fn ymd(year: i32, month: i8, day: i8) -> Date {
+    // Every (month, day) passed here is a fixed, valid calendar day, and every
+    // year a checked one.
+    i16::try_from(year)
+        .ok()
+        .and_then(|y| Date::new(y, month, day).ok())
+        .unwrap_or(Date::MIN)
 }
 
 /// Easter Sunday of `year` (Gregorian; Meeus/Jones/Butcher algorithm).
-pub fn easter_date(year: i32) -> Result<NaiveDate, String> {
+pub fn easter_date(year: i32) -> Result<Date, String> {
     check_year(year)?;
     let a = year % 19;
     let b = year / 100;
@@ -60,31 +67,34 @@ pub fn easter_date(year: i32) -> Result<NaiveDate, String> {
     let month = (h + l - 7 * m + 114) / 31;
     let day = (h + l - 7 * m + 114) % 31 + 1;
     // month is 3 or 4 and day 1..=31 by construction of the algorithm.
-    NaiveDate::from_ymd_opt(year, month.unsigned_abs(), day.unsigned_abs())
-        .ok_or_else(|| format!("E_CHRONOS_INVALID_YEAR: no Easter date for {}", year))
+    match (i16::try_from(year), i8::try_from(month), i8::try_from(day)) {
+        (Ok(y), Ok(m), Ok(d)) => Date::new(y, m, d).ok(),
+        _ => None,
+    }
+    .ok_or_else(|| format!("E_CHRONOS_INVALID_YEAR: no Easter date for {}", year))
 }
 
 /// The first `weekday` on or after `date`.
-fn on_or_after(date: NaiveDate, weekday: Weekday) -> NaiveDate {
-    let ahead = (7 + weekday.num_days_from_monday() - date.weekday().num_days_from_monday()) % 7;
-    date + Duration::days(i64::from(ahead))
+fn on_or_after(date: Date, weekday: Weekday) -> Date {
+    let ahead = (7 + weekday.to_monday_zero_offset() - date.weekday().to_monday_zero_offset()) % 7;
+    date + i64::from(ahead).days()
 }
 
 /// The cantonal fixed days (`MM-DD`, key), from the legacy per-canton table.
-fn cantonal_fixed_days(canton: &str) -> &'static [(u32, u32, &'static str)] {
-    const BERCHTOLD: (u32, u32, &str) = (1, 2, "saint_berchtold");
-    const EPIPHANY: (u32, u32, &str) = (1, 6, "epiphany");
-    const REPUBLIC: (u32, u32, &str) = (3, 1, "republic_day");
-    const JOSEPH: (u32, u32, &str) = (3, 19, "saint_joseph");
-    const LABOUR: (u32, u32, &str) = (5, 1, "labour_day");
-    const PLEBISCITE: (u32, u32, &str) = (6, 23, "plebiscite_commemoration");
-    const PETER_PAUL: (u32, u32, &str) = (6, 29, "saints_peter_and_paul");
-    const ASSUMPTION: (u32, u32, &str) = (8, 15, "assumption");
-    const FLUE: (u32, u32, &str) = (9, 25, "nicholas_of_flue");
-    const ALL_SAINTS: (u32, u32, &str) = (11, 1, "all_saints");
-    const IMMACULATE: (u32, u32, &str) = (12, 8, "immaculate_conception");
-    const STEPHEN: (u32, u32, &str) = (12, 26, "saint_stephen");
-    const RESTORATION: (u32, u32, &str) = (12, 31, "restoration_of_the_republic");
+fn cantonal_fixed_days(canton: &str) -> &'static [(i8, i8, &'static str)] {
+    const BERCHTOLD: (i8, i8, &str) = (1, 2, "saint_berchtold");
+    const EPIPHANY: (i8, i8, &str) = (1, 6, "epiphany");
+    const REPUBLIC: (i8, i8, &str) = (3, 1, "republic_day");
+    const JOSEPH: (i8, i8, &str) = (3, 19, "saint_joseph");
+    const LABOUR: (i8, i8, &str) = (5, 1, "labour_day");
+    const PLEBISCITE: (i8, i8, &str) = (6, 23, "plebiscite_commemoration");
+    const PETER_PAUL: (i8, i8, &str) = (6, 29, "saints_peter_and_paul");
+    const ASSUMPTION: (i8, i8, &str) = (8, 15, "assumption");
+    const FLUE: (i8, i8, &str) = (9, 25, "nicholas_of_flue");
+    const ALL_SAINTS: (i8, i8, &str) = (11, 1, "all_saints");
+    const IMMACULATE: (i8, i8, &str) = (12, 8, "immaculate_conception");
+    const STEPHEN: (i8, i8, &str) = (12, 26, "saint_stephen");
+    const RESTORATION: (i8, i8, &str) = (12, 31, "restoration_of_the_republic");
     match canton {
         "ZH" => &[BERCHTOLD, LABOUR, STEPHEN],
         "BE" | "LU" => &[BERCHTOLD, STEPHEN],
@@ -118,8 +128,8 @@ fn cantonal_fixed_days(canton: &str) -> &'static [(u32, u32, &'static str)] {
     }
 }
 
-fn france(year: i32, easter: NaiveDate, out: &mut Vec<Holiday>) {
-    let fixed: [(u32, u32, &'static str); 8] = [
+fn france(year: i32, easter: Date, out: &mut Vec<Holiday>) {
+    let fixed: [(i8, i8, &'static str); 8] = [
         (1, 1, "new_year"),
         (5, 1, "labour_day"),
         (5, 8, "victory_in_europe"),
@@ -136,20 +146,20 @@ fn france(year: i32, easter: NaiveDate, out: &mut Vec<Holiday>) {
         });
     }
     out.push(Holiday {
-        date: easter + Duration::days(1),
+        date: easter + 1.days(),
         key: "easter_monday",
     });
     out.push(Holiday {
-        date: easter + Duration::days(39),
+        date: easter + 39.days(),
         key: "ascension",
     });
     out.push(Holiday {
-        date: easter + Duration::days(50),
+        date: easter + 50.days(),
         key: "whit_monday",
     });
 }
 
-fn canton(year: i32, easter: NaiveDate, code: &str, out: &mut Vec<Holiday>) {
+fn canton(year: i32, easter: Date, code: &str, out: &mut Vec<Holiday>) {
     for &(month, day, key) in cantonal_fixed_days(code) {
         out.push(Holiday {
             date: ymd(year, month, day),
@@ -157,30 +167,30 @@ fn canton(year: i32, easter: NaiveDate, code: &str, out: &mut Vec<Holiday>) {
         });
     }
     out.push(Holiday {
-        date: easter + Duration::days(1),
+        date: easter + 1.days(),
         key: "easter_monday",
     });
     out.push(Holiday {
-        date: easter + Duration::days(39),
+        date: easter + 39.days(),
         key: "ascension",
     });
     out.push(Holiday {
-        date: easter + Duration::days(50),
+        date: easter + 50.days(),
         key: "whit_monday",
     });
 
     let good_friday = Holiday {
-        date: easter - Duration::days(2),
+        date: easter - 2.days(),
         key: "good_friday",
     };
     let corpus_christi = Holiday {
-        date: easter + Duration::days(60),
+        date: easter + 60.days(),
         key: "corpus_christi",
     };
-    let first_sunday_of_september = on_or_after(ymd(year, 9, 1), Weekday::Sun);
+    let first_sunday_of_september = on_or_after(ymd(year, 9, 1), Weekday::Sunday);
     // The Monday after the third Sunday of September.
     let federal_fast_monday = Holiday {
-        date: first_sunday_of_september + Duration::days(15),
+        date: first_sunday_of_september + 15.days(),
         key: "federal_fast_monday",
     };
 
@@ -194,9 +204,9 @@ fn canton(year: i32, easter: NaiveDate, code: &str, out: &mut Vec<Holiday>) {
         "GL" => {
             // First Thursday of April, of the year asked; one week later when
             // it falls in Holy Week (Palm Sunday to Holy Saturday).
-            let mut fahrt = on_or_after(ymd(year, 4, 1), Weekday::Thu);
-            if fahrt >= easter - Duration::days(7) && fahrt < easter {
-                fahrt += Duration::days(7);
+            let mut fahrt = on_or_after(ymd(year, 4, 1), Weekday::Thursday);
+            if fahrt >= easter - 7.days() && fahrt < easter {
+                fahrt += 7.days();
             }
             out.push(Holiday {
                 date: fahrt,
@@ -217,8 +227,8 @@ fn canton(year: i32, easter: NaiveDate, code: &str, out: &mut Vec<Holiday>) {
             // a Sunday.
             let jan2 = ymd(year, 1, 2);
             let dec26 = ymd(year, 12, 26);
-            let new_year_on_sunday = ymd(year, 1, 1).weekday() == Weekday::Sun;
-            let christmas_on_sunday = ymd(year, 12, 25).weekday() == Weekday::Sun;
+            let new_year_on_sunday = ymd(year, 1, 1).weekday() == Weekday::Sunday;
+            let christmas_on_sunday = ymd(year, 12, 25).weekday() == Weekday::Sunday;
             out.retain(|h| {
                 !((h.date == jan2 && !new_year_on_sunday)
                     || (h.date == dec26 && !christmas_on_sunday))
@@ -227,7 +237,7 @@ fn canton(year: i32, easter: NaiveDate, code: &str, out: &mut Vec<Holiday>) {
         "GE" => {
             // Thursday after the first Sunday of September.
             out.push(Holiday {
-                date: first_sunday_of_september + Duration::days(4),
+                date: first_sunday_of_september + 4.days(),
                 key: "geneva_fast",
             });
             out.push(good_friday);
@@ -291,12 +301,12 @@ pub fn holidays(year: i32, country: &str, region: Option<&str>) -> Result<Vec<Ho
 /// Whether the calendar date `date` (`YYYY-MM-DD`) is a public holiday.
 pub fn is_holiday(date: &str, country: &str, region: Option<&str>) -> Result<bool, String> {
     let day = parse_calendar_date(date)?;
-    Ok(holidays(day.year(), country, region)?
+    Ok(holidays(i32::from(day.year()), country, region)?
         .iter()
         .any(|h| h.date == day))
 }
 
-fn parse_calendar_date(text: &str) -> Result<NaiveDate, String> {
+fn parse_calendar_date(text: &str) -> Result<Date, String> {
     let invalid = || {
         format!(
             "E_CHRONOS_INVALID_DATE: '{}' is not a calendar date (YYYY-MM-DD)",
@@ -307,15 +317,15 @@ fn parse_calendar_date(text: &str) -> Result<NaiveDate, String> {
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
         return Err(invalid());
     }
-    NaiveDate::parse_from_str(text, "%Y-%m-%d").map_err(|_| invalid())
+    grammar::date(text, grammar::DATE).map_err(|_| invalid())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn d(text: &str) -> NaiveDate {
-        NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap()
+    fn d(text: &str) -> Date {
+        text.parse().unwrap()
     }
 
     #[test]
@@ -333,7 +343,7 @@ mod tests {
     fn easter_always_a_sunday_in_range() {
         for year in MIN_YEAR..=MAX_YEAR {
             let e = easter_date(year).unwrap();
-            assert_eq!(e.weekday(), Weekday::Sun, "{}", year);
+            assert_eq!(e.weekday(), Weekday::Sunday, "{}", year);
             assert!(e >= ymd(year, 3, 22) && e <= ymd(year, 4, 25), "{}", year);
         }
     }

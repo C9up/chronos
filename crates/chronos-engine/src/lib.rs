@@ -1,8 +1,18 @@
-use chrono::{
-    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, Offset, TimeZone, Timelike, Utc,
-};
-use chrono_tz::Tz;
+//! The date/time and recurrence engine behind `@c9up/chronos`.
+//!
+//! Every instant crosses this API as an ISO 8601 string and is held here as its
+//! UTC wall clock, a [`jiff::civil::DateTime`] — not a `jiff::Timestamp`, whose
+//! range stops a day short of 9999-12-31 so that it can be shown at any offset,
+//! while the engine's range is all of years 0000-9999. Zones come from the IANA
+//! database jiff bundles into the binary (see `Cargo.toml`), and every
+//! wall-clock rule — what an ambiguous or skipped time becomes, how a calendar
+//! step keeps its hour across a change of time — is written out here.
 
+use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::{AmbiguousOffset, Offset, TimeZone};
+use jiff::{SignedDuration, Timestamp};
+
+mod grammar;
 pub mod holidays;
 pub mod rrule;
 
@@ -11,6 +21,8 @@ pub mod rrule;
 const MIN_YEAR: i32 = 0;
 const MAX_YEAR: i32 = 9999;
 
+const ONE_MILLISECOND: SignedDuration = SignedDuration::from_millis(1);
+
 fn out_of_range() -> String {
     format!(
         "Date arithmetic result is out of range: years are limited to {:04}-{}",
@@ -18,8 +30,8 @@ fn out_of_range() -> String {
     )
 }
 
-fn in_range<T: Datelike>(value: T) -> Result<T, String> {
-    if (MIN_YEAR..=MAX_YEAR).contains(&value.year()) {
+fn in_range(value: DateTime) -> Result<DateTime, String> {
+    if (MIN_YEAR..=MAX_YEAR).contains(&i32::from(value.year())) {
         Ok(value)
     } else {
         Err(out_of_range())
@@ -36,32 +48,53 @@ fn clock_unit_seconds(unit: &str) -> Option<i64> {
     }
 }
 
-/// `amount × seconds` as a Duration, or an out-of-range error instead of the
-/// panic `Duration::seconds` raises past its bounds.
-fn checked_duration(amount: i64, seconds: i64) -> Result<Duration, String> {
+/// `amount × seconds` as a duration, or an out-of-range error when the product
+/// leaves what an `i64` holds.
+fn checked_duration(amount: i64, seconds: i64) -> Result<SignedDuration, String> {
     amount
         .checked_mul(seconds)
-        .and_then(Duration::try_seconds)
+        .map(SignedDuration::from_secs)
         .ok_or_else(out_of_range)
+}
+
+/// `dt` moved by an exact duration; `None` past the years a value can hold.
+///
+/// jiff refuses a duration of more days than it counts from 1970 to 9999
+/// (about 8 000 years) even when the result is in range, so a longer one is
+/// added in two halves; each lands between the start and the result.
+fn shifted(dt: DateTime, by: SignedDuration) -> Option<DateTime> {
+    const LONGEST_HOURS: i64 = 2_000_000 * 24;
+    match dt.checked_add(by) {
+        Ok(out) => Some(out),
+        Err(_) if by.as_hours().abs() > LONGEST_HOURS => {
+            let half = by / 2;
+            shifted(shifted(dt, half)?, by - half)
+        }
+        Err(_) => None,
+    }
 }
 
 pub fn add(iso: &str, amount: i64, unit: &str) -> Result<String, String> {
     let dt = parse_iso(iso)?;
     let unit = unit.to_ascii_lowercase();
     let out = match unit.as_str() {
-        "days" | "day" => dt.checked_add_signed(checked_duration(amount, 86_400)?),
-        "weeks" | "week" => dt.checked_add_signed(checked_duration(amount, 604_800)?),
-        "months" | "month" => checked_add_months(dt.naive_utc(), amount).map(|n| n.and_utc()),
+        "days" | "day" => shifted(dt, checked_duration(amount, 86_400)?),
+        "weeks" | "week" => shifted(dt, checked_duration(amount, 604_800)?),
+        "months" | "month" => checked_add_months(dt, amount),
         "years" | "year" => amount
             .checked_mul(12)
-            .and_then(|m| checked_add_months(dt.naive_utc(), m))
-            .map(|n| n.and_utc()),
+            .and_then(|m| checked_add_months(dt, m)),
         other => match clock_unit_seconds(other) {
-            Some(seconds) => dt.checked_add_signed(checked_duration(amount, seconds)?),
+            Some(seconds) => shifted(dt, checked_duration(amount, seconds)?),
             None => return Err(format!("Unsupported unit: {}", unit)),
         },
     };
     Ok(to_iso(in_range(out.ok_or_else(out_of_range)?)?))
+}
+
+/// Milliseconds from `b` to `a`, truncated toward zero.
+fn millis_between(a: DateTime, b: DateTime) -> f64 {
+    a.duration_since(b).as_millis() as f64
 }
 
 /// `a - b`, in the given unit, signed and fractional.
@@ -73,7 +106,7 @@ pub fn add(iso: &str, amount: i64, unit: &str) -> Result<String, String> {
 pub fn diff(a_iso: &str, b_iso: &str, unit: &str) -> Result<f64, String> {
     let a = parse_iso(a_iso)?;
     let b = parse_iso(b_iso)?;
-    let ms = (a - b).num_milliseconds() as f64;
+    let ms = millis_between(a, b);
     let out = match unit.to_ascii_lowercase().as_str() {
         "milliseconds" | "millisecond" => ms,
         "seconds" | "second" => ms / 1_000.0,
@@ -88,128 +121,165 @@ pub fn diff(a_iso: &str, b_iso: &str, unit: &str) -> Result<f64, String> {
     Ok(out)
 }
 
-/// Truncate a naive datetime to the start of `unit`.
+/// A wall clock at whole hours, minutes and seconds.
+fn at_hms(date: Date, hour: i8, minute: i8, second: i8) -> Option<DateTime> {
+    Time::new(hour, minute, second, 0)
+        .ok()
+        .map(|time| date.to_datetime(time))
+}
+
+/// Truncate a wall clock to the start of `unit`.
 ///
 /// The ONE place boundary arithmetic lives. `start_of` applies it to a UTC
 /// instant and `start_of_in_zone` to a wall-clock one — before this existed the
 /// zoned path was a hand-written switch in TypeScript, and the two drifted:
 /// `second` was added to one and not the other, so the same call answered
 /// differently depending on the zone.
-fn start_of_naive(nd: NaiveDateTime, unit: &str) -> Result<NaiveDateTime, String> {
+fn start_of_naive(nd: DateTime, unit: &str) -> Result<DateTime, String> {
     let date = nd.date();
     let out = match unit.to_ascii_lowercase().as_str() {
-        "year" => NaiveDate::from_ymd_opt(date.year(), 1, 1).and_then(|d| d.and_hms_opt(0, 0, 0)),
-        "month" => NaiveDate::from_ymd_opt(date.year(), date.month(), 1)
-            .and_then(|d| d.and_hms_opt(0, 0, 0)),
+        "year" => at_hms(date.first_of_year(), 0, 0, 0),
+        "month" => at_hms(date.first_of_month(), 0, 0, 0),
         "week" => {
-            let offset = date.weekday().num_days_from_monday() as i64;
-            (date - Duration::days(offset)).and_hms_opt(0, 0, 0)
+            let back = i64::from(date.weekday().to_monday_zero_offset());
+            date.checked_sub(SignedDuration::from_hours(24 * back))
+                .ok()
+                .and_then(|monday| at_hms(monday, 0, 0, 0))
         }
-        "day" => date.and_hms_opt(0, 0, 0),
-        "hour" => date.and_hms_opt(nd.hour(), 0, 0),
-        "minute" => date.and_hms_opt(nd.hour(), nd.minute(), 0),
-        "second" => date.and_hms_opt(nd.hour(), nd.minute(), nd.second()),
+        "day" => at_hms(date, 0, 0, 0),
+        "hour" => at_hms(date, nd.hour(), 0, 0),
+        "minute" => at_hms(date, nd.hour(), nd.minute(), 0),
+        "second" => at_hms(date, nd.hour(), nd.minute(), nd.second()),
         _ => return Err(format!("Unsupported unit: {}", unit)),
     };
     out.ok_or_else(|| format!("Invalid {} start", unit))
 }
 
+/// Where the unit after the one containing a wall clock starts.
+enum NextStart {
+    At(DateTime),
+    /// The first instant of year 10000, which no civil value holds: the unit
+    /// is the last of its kind in 9999 (a week never ends exactly there).
+    YearTenThousand,
+}
+
 /// The start of the unit AFTER the one containing `nd` — the other half of
 /// `end_of`, kept beside `start_of_naive` so the two unit lists cannot drift.
-fn next_unit_naive(nd: NaiveDateTime, unit: &str) -> Result<NaiveDateTime, String> {
+fn next_unit_naive(nd: DateTime, unit: &str) -> Result<NextStart, String> {
     let start = start_of_naive(nd, unit)?;
-    Ok(match unit.to_ascii_lowercase().as_str() {
-        "year" => add_months_naive(start, 12),
-        "month" => add_months_naive(start, 1),
-        "week" => start + Duration::weeks(1),
-        "day" => start + Duration::days(1),
-        "hour" => start + Duration::hours(1),
-        "minute" => start + Duration::minutes(1),
-        "second" => start + Duration::seconds(1),
+    let lower = unit.to_ascii_lowercase();
+    let next = match lower.as_str() {
+        "year" => checked_add_months(start, 12),
+        "month" => checked_add_months(start, 1),
+        "week" => shifted(start, SignedDuration::from_hours(7 * 24)),
+        "day" => shifted(start, SignedDuration::from_hours(24)),
+        "hour" => shifted(start, SignedDuration::from_hours(1)),
+        "minute" => shifted(start, SignedDuration::from_mins(1)),
+        "second" => shifted(start, SignedDuration::from_secs(1)),
         _ => return Err(format!("Unsupported unit: {}", unit)),
-    })
+    };
+    match next {
+        Some(next) => Ok(NextStart::At(next)),
+        None if lower != "week" => Ok(NextStart::YearTenThousand),
+        None => Err(out_of_range()),
+    }
+}
+
+/// One millisecond before the start of the next unit, on the UTC side: `read`
+/// is where a wall clock resolves, and `after` how far past it the start lies
+/// (one nanosecond when the start is the first instant of year 10000, read as
+/// the last nanosecond of 9999).
+fn last_millisecond_before(read: DateTime, after: SignedDuration) -> Result<DateTime, String> {
+    shifted(read, after - ONE_MILLISECOND).ok_or_else(out_of_range)
 }
 
 pub fn start_of(iso: &str, unit: &str) -> Result<String, String> {
     let dt = parse_iso(iso)?;
-    let naive = start_of_naive(dt.naive_utc(), unit)?;
-    Ok(to_iso(Utc.from_utc_datetime(&naive)))
+    Ok(to_iso(start_of_naive(dt, unit)?))
 }
 
 /// `start_of` against the WALL CLOCK in `zone`, returned as a UTC instant.
 pub fn start_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String, String> {
     let dt = parse_iso(utc_iso)?;
-    let tz: Tz = zone
-        .parse()
-        .map_err(|_| format!("Unknown timezone: {}", zone))?;
-    let local = dt.with_timezone(&tz);
-    let naive = start_of_naive(local.naive_local(), unit)?;
-    Ok(to_iso(resolve_from(naive, offset_of(&local), tz)?))
+    let tz = known_zone(zone)?;
+    let local = Wall::of(&tz, dt)?;
+    let naive = start_of_naive(local.clock, unit)?;
+    Ok(to_iso(resolve_from(naive, local.offset, &tz)?))
 }
 
 /// `end_of` against the WALL CLOCK in `zone`, returned as a UTC instant.
 pub fn end_of_in_zone(utc_iso: &str, unit: &str, zone: &str) -> Result<String, String> {
     let dt = parse_iso(utc_iso)?;
-    let tz: Tz = zone
-        .parse()
-        .map_err(|_| format!("Unknown timezone: {}", zone))?;
-    let local = dt.with_timezone(&tz);
-    let next = next_unit_naive(local.naive_local(), unit)?;
+    let tz = known_zone(zone)?;
+    let local = Wall::of(&tz, dt)?;
     // The start of the next unit, one millisecond back on the UTC side.
-    let next_utc = resolve_from(next, offset_of(&local), tz)?;
-    Ok(to_iso(next_utc - Duration::milliseconds(1)))
+    let end = match next_unit_naive(local.clock, unit)? {
+        NextStart::At(next) => {
+            last_millisecond_before(resolve_from(next, local.offset, &tz)?, SignedDuration::ZERO)?
+        }
+        NextStart::YearTenThousand => last_millisecond_before(
+            resolve_from(DateTime::MAX, local.offset, &tz)?,
+            SignedDuration::from_nanos(1),
+        )?,
+    };
+    Ok(to_iso(end))
 }
 
 pub fn end_of(iso: &str, unit: &str) -> Result<String, String> {
     let dt = parse_iso(iso)?;
-    let next = next_unit_naive(dt.naive_utc(), unit)?;
-    Ok(to_iso(
-        Utc.from_utc_datetime(&next) - Duration::milliseconds(1),
-    ))
+    let end = match next_unit_naive(dt, unit)? {
+        NextStart::At(next) => last_millisecond_before(next, SignedDuration::ZERO)?,
+        NextStart::YearTenThousand => {
+            last_millisecond_before(DateTime::MAX, SignedDuration::from_nanos(1))?
+        }
+    };
+    Ok(to_iso(end))
 }
 
 pub fn format(iso: &str, pattern: &str) -> Result<String, String> {
     let dt = parse_iso(iso)?;
-    let chrono_pattern = translate_pattern(pattern);
-    Ok(dt.format(&chrono_pattern).to_string())
+    Ok(render_pattern(dt, pattern))
 }
 
-/// Translate a Luxon-style pattern to chrono's `strftime` format with
-/// **token-aware** substitution.
+/// A token of the moment-style patterns `format` reads.
+#[derive(Clone, Copy)]
+enum Token {
+    Year,
+    YearOfCentury,
+    Month,
+    Day,
+    Hour,
+    Minute,
+    Second,
+    Offset,
+}
+
+/// Render a moment-style pattern (`YYYY`, `YY`, `MM`, `DD`, `HH`, `mm`, `ss`,
+/// `Z`) against a UTC wall clock.
 ///
-/// Previously this function did chained `String::replace` on the whole
-/// pattern, which broke for two reasons:
+/// The walk is **token-aware**. Chained `String::replace` on the whole pattern
+/// used to break for two reasons:
 ///   1. `replace("YYYY", ...)` then `replace("MM", ...)` would substitute
 ///      inside literal text the user wanted preserved
 ///   2. `replace("Z", ...)` was global, corrupting any literal `Z` in the
 ///      pattern (e.g. `"YYYY-MM-DDTHH:mm:ss[Z]"` had its `Z` replaced even
 ///      though it was meant to stay literal)
 ///
-/// The new implementation walks the pattern character-by-character. Brackets
-/// `[...]` mark literal sections that pass through untouched (Luxon
-/// convention). Outside brackets, recognized tokens are translated; anything
-/// else is escaped via `%%` so chrono treats it literally.
-fn translate_pattern(pattern: &str) -> String {
-    const TOKENS: [(&str, &str); 8] = [
-        ("YYYY", "%Y"),
-        ("YY", "%y"),
-        ("MM", "%m"),
-        ("DD", "%d"),
-        ("HH", "%H"),
-        ("mm", "%M"),
-        ("ss", "%S"),
+/// Brackets `[...]` mark literal sections that pass through untouched (Luxon
+/// convention; an unclosed one runs to the end). Outside brackets, recognized
+/// tokens are written, longest first; any other character is kept as it is.
+fn render_pattern(dt: DateTime, pattern: &str) -> String {
+    const TOKENS: [(&str, Token); 8] = [
+        ("YYYY", Token::Year),
+        ("YY", Token::YearOfCentury),
+        ("MM", Token::Month),
+        ("DD", Token::Day),
+        ("HH", Token::Hour),
+        ("mm", Token::Minute),
+        ("ss", Token::Second),
         // A literal Z is written `[Z]`.
-        ("Z", "%:z"),
+        ("Z", Token::Offset),
     ];
-    // Literal text is pushed char by char, never byte by byte: a byte of a
-    // multi-byte character pushed as a `char` is a different, Latin-1 one.
-    let push_literal = |out: &mut String, c: char| {
-        if c == '%' {
-            out.push_str("%%");
-        } else {
-            out.push(c);
-        }
-    };
     let mut out = String::with_capacity(pattern.len() * 2);
     let mut rest = pattern;
     while let Some(c) = rest.chars().next() {
@@ -220,33 +290,145 @@ fn translate_pattern(pattern: &str) -> String {
                 Some(end) => (&inner[..end], &inner[end + 1..]),
                 None => (inner, ""),
             };
-            for lc in literal.chars() {
-                push_literal(&mut out, lc);
-            }
+            out.push_str(literal);
             rest = after;
             continue;
         }
-        // Longest match first, so `YYYY` beats `YY`.
-        if let Some((src, dst)) = TOKENS.iter().find(|(src, _)| rest.starts_with(src)) {
-            out.push_str(dst);
+        if let Some((src, token)) = TOKENS.iter().find(|(src, _)| rest.starts_with(src)) {
+            match token {
+                Token::Year => push_year(&mut out, dt.year()),
+                Token::YearOfCentury => push_two(&mut out, i64::from(dt.year()).rem_euclid(100)),
+                Token::Month => push_two(&mut out, dt.month()),
+                Token::Day => push_two(&mut out, dt.day()),
+                Token::Hour => push_two(&mut out, dt.hour()),
+                Token::Minute => push_two(&mut out, dt.minute()),
+                Token::Second => push_two(&mut out, dt.second()),
+                // The value is UTC; the token writes its offset.
+                Token::Offset => push_offset(&mut out, 0),
+            }
             rest = &rest[src.len()..];
             continue;
         }
-        push_literal(&mut out, c);
+        out.push(c);
         rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+/// `width` decimal digits of a non-negative value, zero-padded. Written by
+/// hand rather than through `format!`: every result crosses the API as text,
+/// and this is on the path of each one.
+fn push_digits(out: &mut String, value: u32, width: u32) {
+    for place in (0..width).rev() {
+        let digit = (value / 10u32.pow(place)) % 10;
+        out.push(char::from(b'0' + digit as u8));
+    }
+}
+
+/// Two digits, zero-padded.
+fn push_two(out: &mut String, value: impl Into<i64>) {
+    push_digits(out, u32::try_from(value.into()).unwrap_or_default(), 2);
+}
+
+/// An ISO 8601 year: four digits for 0000-9999, an explicit sign otherwise.
+fn push_year(out: &mut String, year: i16) {
+    if !(0..=9999).contains(&year) {
+        out.push(if year < 0 { '-' } else { '+' });
+    }
+    push_digits(out, u32::from(year.unsigned_abs()), 4);
+}
+
+/// `±HH:MM`, rounded to the nearest minute.
+fn push_offset(out: &mut String, seconds: i32) {
+    out.push(if seconds < 0 { '-' } else { '+' });
+    let minutes = (seconds.unsigned_abs() + 30) / 60;
+    push_digits(out, minutes / 60, 2);
+    out.push(':');
+    push_digits(out, minutes % 60, 2);
+}
+
+/// How many fractional digits an RFC 3339 rendering writes.
+#[derive(Clone, Copy)]
+enum Fraction {
+    /// Always three.
+    Millis,
+    /// None, three, six or nine: as many as the value needs.
+    Auto,
+}
+
+/// `YYYY-MM-DD`, `separator`, `HH:MM:SS` and the fraction.
+fn push_clock(out: &mut String, clock: DateTime, separator: char, fraction: Fraction) {
+    push_year(out, clock.year());
+    out.push('-');
+    push_two(out, clock.month());
+    out.push('-');
+    push_two(out, clock.day());
+    out.push(separator);
+    push_two(out, clock.hour());
+    out.push(':');
+    push_two(out, clock.minute());
+    out.push(':');
+    push_two(out, clock.second());
+    let nanos = clock.subsec_nanosecond().unsigned_abs();
+    let (value, width) = match fraction {
+        Fraction::Millis => (nanos / 1_000_000, 3),
+        Fraction::Auto if nanos == 0 => return,
+        Fraction::Auto if nanos.is_multiple_of(1_000_000) => (nanos / 1_000_000, 3),
+        Fraction::Auto if nanos.is_multiple_of(1_000) => (nanos / 1_000, 6),
+        Fraction::Auto => (nanos, 9),
+    };
+    out.push('.');
+    push_digits(out, value, width);
+}
+
+/// A wall clock as messages name it: `2026-03-29 02:30:00`.
+pub(crate) fn clock_text(clock: DateTime) -> String {
+    let mut out = String::with_capacity(32);
+    push_clock(&mut out, clock, ' ', Fraction::Auto);
+    out
+}
+
+/// An RFC 3339 rendering of a wall clock and its offset. `zulu` writes a zero
+/// offset as `Z`.
+fn rfc3339(clock: DateTime, offset_seconds: i32, fraction: Fraction, zulu: bool) -> String {
+    let mut out = String::with_capacity(32);
+    push_clock(&mut out, clock, 'T', fraction);
+    if zulu && offset_seconds == 0 {
+        out.push('Z');
+    } else {
+        push_offset(&mut out, offset_seconds);
     }
     out
 }
 
 // ─── Timezone support (Story 36.11) ─────────────────────────────────────────
 
-/// Validate an IANA timezone identifier against the `chrono-tz` database.
-/// Returns the canonical name on success (e.g. normalizes `us/eastern` to
-/// `US/Eastern`).
+/// The zone an IANA identifier names, spelled exactly as the database spells
+/// it: `Europe/Paris` and the `US/Eastern` link, not `europe/paris`.
+///
+/// jiff looks names up without regard to case and answers with the database's
+/// spelling, so a name is known only when that spelling is the one given.
+/// `Factory` — tzdata's placeholder for "no zone configured yet", not a place —
+/// is not a zone the engine accepts.
+pub(crate) fn lookup_zone(name: &str) -> Option<TimeZone> {
+    if name == "Factory" {
+        return None;
+    }
+    let tz = jiff::tz::db().get(name).ok()?;
+    (tz.iana_name() == Some(name)).then_some(tz)
+}
+
+fn known_zone(zone: &str) -> Result<TimeZone, String> {
+    lookup_zone(zone).ok_or_else(|| format!("Unknown timezone: {}", zone))
+}
+
+/// Validate an IANA timezone identifier against the bundled tz database and
+/// return it. Names are case-sensitive: `us/eastern` is refused, `US/Eastern`
+/// (a link) is returned as it is.
 pub fn validate_timezone(zone: &str) -> Result<String, String> {
-    zone.parse::<Tz>()
-    .map(|tz| tz.name().to_string())
-    .map_err(|_| format!("Unknown IANA timezone: '{}'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones", zone))
+    lookup_zone(zone)
+    .map(|_| zone.to_string())
+    .ok_or_else(|| format!("Unknown IANA timezone: '{}'. Check https://en.wikipedia.org/wiki/List_of_tz_database_time_zones", zone))
 }
 
 /// Convert a UTC ISO timestamp to the wall-clock time in the given IANA zone.
@@ -255,18 +437,13 @@ pub fn validate_timezone(zone: &str) -> Result<String, String> {
 /// total UTC offset in minutes (e.g. 120 for `Europe/Paris` in summer).
 pub fn to_zone(utc_iso: &str, zone: &str) -> Result<ZonedOutput, String> {
     let dt = parse_iso(utc_iso)?;
-    let tz: Tz = zone
-        .parse()
-        .map_err(|_| format!("Unknown timezone: {}", zone))?;
-    let local = dt.with_timezone(&tz);
-    let offset_seconds = local.offset().fix().local_minus_utc();
-    let offset_minutes = offset_seconds / 60;
-    // Format with the local offset.
-    let iso = local.to_rfc3339();
+    let tz = known_zone(zone)?;
+    let local = Wall::of(&tz, dt)?;
+    let offset_seconds = local.offset_seconds();
     Ok(ZonedOutput {
-        iso,
-        offset_minutes,
-        zone_name: tz.name().to_string(),
+        iso: rfc3339(local.clock, offset_seconds, Fraction::Auto, false),
+        offset_minutes: offset_seconds / 60,
+        zone_name: zone.to_string(),
     })
 }
 
@@ -285,51 +462,70 @@ pub struct ZonedOutput {
 /// timezone-independent and behave identically to the UTC `add` path.
 pub fn add_in_zone(utc_iso: &str, amount: i64, unit: &str, zone: &str) -> Result<String, String> {
     let dt = parse_iso(utc_iso)?;
-    let tz: Tz = zone
-        .parse()
-        .map_err(|_| format!("Unknown timezone: {}", zone))?;
+    let tz = known_zone(zone)?;
 
     let unit_lower = unit.to_ascii_lowercase();
-    let local = dt.with_timezone(&tz).naive_local();
-    let shifted = match unit_lower.as_str() {
+    let local = Wall::of(&tz, dt)?;
+    let shifted_local = match unit_lower.as_str() {
         // Calendar units — interpreted on the local wall clock.
-        "days" | "day" => local.checked_add_signed(checked_duration(amount, 86_400)?),
-        "weeks" | "week" => local.checked_add_signed(checked_duration(amount, 604_800)?),
-        "months" | "month" => checked_add_months(local, amount),
+        "days" | "day" => shifted(local.clock, checked_duration(amount, 86_400)?),
+        "weeks" | "week" => shifted(local.clock, checked_duration(amount, 604_800)?),
+        "months" | "month" => checked_add_months(local.clock, amount),
         "years" | "year" => amount
             .checked_mul(12)
-            .and_then(|m| checked_add_months(local, m)),
+            .and_then(|m| checked_add_months(local.clock, m)),
         other => match clock_unit_seconds(other) {
             // Clock units — exact durations, zone-independent.
             Some(seconds) => {
-                let out = dt
-                    .checked_add_signed(checked_duration(amount, seconds)?)
-                    .ok_or_else(out_of_range)?;
+                let out =
+                    shifted(dt, checked_duration(amount, seconds)?).ok_or_else(out_of_range)?;
                 return Ok(to_iso(in_range(out)?));
             }
             None => return Err(format!("Unsupported unit: {}", unit)),
         },
     };
-    let shifted = in_range(shifted.ok_or_else(out_of_range)?)?;
-    let previous = offset_of(&dt.with_timezone(&tz));
-    Ok(to_iso(resolve_from(shifted, previous, tz)?))
+    let shifted_local = in_range(shifted_local.ok_or_else(out_of_range)?)?;
+    Ok(to_iso(resolve_from(shifted_local, local.offset, &tz)?))
+}
+
+/// An instant together with its wall clock in a zone.
+#[derive(Clone, Copy)]
+struct Wall {
+    /// The instant, as its UTC wall clock.
+    utc: DateTime,
+    /// The wall clock in the zone.
+    clock: DateTime,
+    /// The zone's offset at the instant, in seconds east of UTC.
+    offset: i64,
+}
+
+impl Wall {
+    fn of(tz: &TimeZone, utc: DateTime) -> Result<Wall, String> {
+        let offset = offset_seconds_at(tz, utc);
+        let clock = shifted(utc, SignedDuration::from_secs(offset)).ok_or_else(out_of_range)?;
+        Ok(Wall { utc, clock, offset })
+    }
+
+    /// The offset as `i32`; a zone's offset is less than a day.
+    fn offset_seconds(&self) -> i32 {
+        i32::try_from(self.offset).unwrap_or_default()
+    }
+}
+
+/// Move a zoned instant by whole months, keeping the wall-clock time; `None`
+/// past the years a value can hold.
+///
+/// The same DST policy `resolve_from` applies elsewhere: an ambiguous local
+/// time keeps the offset it had, and one that falls in a spring-forward gap
+/// moves forward by the size of the gap.
+fn add_months_in_zone(tz: &TimeZone, dt: Wall, months: i64) -> Option<Wall> {
+    let naive = checked_add_months(dt.clock, months)?;
+    let utc = resolve_from(naive, dt.offset, tz).ok()?;
+    Wall::of(tz, utc).ok()
 }
 
 /// Diff two UTC instants with calendar-unit interpretation in the given zone.
 /// Month/year diffs use the wall-clock date in the zone, not the UTC date.
-/// Move a zoned instant by whole months, keeping the wall-clock time.
-///
-/// The same DST policy `resolve_local` applies elsewhere: an ambiguous local
-/// time takes the first occurrence, and one that falls in a spring-forward gap
-/// steps forward to the first that exists.
-fn add_months_in_zone(dt: DateTime<Tz>, months: i64) -> DateTime<Tz> {
-    let tz = dt.timezone();
-    let naive = add_months_naive(dt.naive_local(), months);
-    resolve_from(naive, offset_of(&dt), tz)
-        .map(|utc| utc.with_timezone(&tz))
-        .unwrap_or(dt)
-}
-
 pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<f64, String> {
     let unit_lower = unit.to_ascii_lowercase();
     // Calendar units are counted on the zone's calendar: a day across a DST
@@ -343,40 +539,63 @@ pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<
         "years" | "year" => (12, 0),
         _ => return Err(format!("Unsupported unit: {}", unit)),
     };
-    let tz: Tz = zone
-        .parse()
-        .map_err(|_| format!("Unknown timezone: {}", zone))?;
-    let a = parse_iso(a_utc)?.with_timezone(&tz);
-    let b = parse_iso(b_utc)?.with_timezone(&tz);
-    let sign = if a >= b { 1.0 } else { -1.0 };
-    let (earlier, later) = if a >= b { (b, a) } else { (a, b) };
+    let tz = known_zone(zone)?;
+    let a = Wall::of(&tz, parse_iso(a_utc)?)?;
+    let b = Wall::of(&tz, parse_iso(b_utc)?)?;
+    let sign = if a.utc >= b.utc { 1.0 } else { -1.0 };
+    let (earlier, later) = if a.utc >= b.utc { (b, a) } else { (a, b) };
 
     // `steps` whole units from `base`, on the wall clock.
-    let step_from = |base: DateTime<Tz>, steps: i64| -> DateTime<Tz> {
+    let step_from = |base: Wall, steps: i64| -> Option<Wall> {
         if months_per_step > 0 {
-            add_months_in_zone(base, steps * months_per_step)
+            add_months_in_zone(&tz, base, steps * months_per_step)
         } else {
-            add_days_in_zone(base, steps * days_per_step)
+            add_days_in_zone(&tz, base, steps * days_per_step)
         }
     };
-    let step = |steps: i64| step_from(earlier, steps);
+    // The instant `steps` whole units after `earlier`, read `cycles` times 400
+    // years earlier; `None` past the years a value can hold.
+    //
+    // A unit can end past 9999-12-31, where no value reaches. It is then
+    // measured 400 years earlier: the Gregorian calendar repeats every 400
+    // years (146 097 days, a whole number of weeks), and so does a zone that
+    // far ahead, where only its standing rule applies.
+    let step_back = |steps: i64, cycles: i64| -> Option<DateTime> {
+        let clock = if months_per_step > 0 {
+            let months = steps.checked_mul(months_per_step)?;
+            checked_add_months(earlier.clock, months.checked_sub(4_800 * cycles)?)?
+        } else {
+            let days = steps.checked_mul(days_per_step)?;
+            let days = days.checked_sub(146_097 * cycles)?;
+            shifted(
+                earlier.clock,
+                SignedDuration::from_hours(days.checked_mul(24)?),
+            )?
+        };
+        resolve_from(clock, earlier.offset, &tz).ok()
+    };
+    let step = |steps: i64| step_back(steps, 0);
+    let four_centuries = SignedDuration::from_hours(146_097 * 24);
     // Luxon's `highOrderDiffs`: estimate the whole units from the calendar
     // fields, back off when that overshoots, and measure the remainder against
     // the unit it falls in (a 23-hour day, a 28-day month) — not an average.
+    let (lc, ec) = (later.clock, earlier.clock);
     let estimate = match (months_per_step, days_per_step) {
-        (12, _) => later.year() as i64 - earlier.year() as i64,
+        (12, _) => i64::from(lc.year()) - i64::from(ec.year()),
         (1, _) => {
-            (later.year() as i64 - earlier.year() as i64) * 12
-                + (later.month() as i64 - earlier.month() as i64)
+            (i64::from(lc.year()) - i64::from(ec.year())) * 12
+                + (i64::from(lc.month()) - i64::from(ec.month()))
         }
-        (_, days) => (later.date_naive() - earlier.date_naive()).num_days() / days,
+        (_, days) => lc.date().duration_since(ec.date()).as_hours() / 24 / days,
     };
+    // An instant past 9999 is past `later` too.
+    let overshoots = |utc: Option<DateTime>| utc.is_none_or(|u| u > later.utc);
     let mut steps = estimate;
     let mut high_water = step(steps);
-    let cursor = if high_water > later {
+    let cursor = if overshoots(high_water) {
         steps -= 1;
         let mut cursor = step(steps);
-        if cursor > later {
+        if overshoots(cursor) {
             high_water = cursor;
             steps -= 1;
             cursor = step(steps);
@@ -384,109 +603,155 @@ pub fn diff_in_zone(a_utc: &str, b_utc: &str, unit: &str, zone: &str) -> Result<
         cursor
     } else {
         high_water
-    };
-    if high_water < later {
-        high_water = step_from(cursor, 1);
     }
-    let span = (high_water - cursor).num_milliseconds() as f64;
-    let rest = (later - cursor).num_milliseconds() as f64;
+    .unwrap_or(earlier.utc);
+    let span = match high_water {
+        // `later` lies in the unit after the cursor.
+        Some(top) if top < later.utc => {
+            let next = Wall::of(&tz, cursor).ok().and_then(|wall| {
+                step_from(wall, 1)
+                    .map(|end| millis_between(end.utc, wall.utc))
+                    .or_else(|| {
+                        let clock = checked_add_months(wall.clock, -4_800)?;
+                        let utc = resolve_from(clock, wall.offset, &tz).ok()?;
+                        let back = Wall::of(&tz, utc).ok()?;
+                        step_from(back, 1).map(|end| millis_between(end.utc, back.utc))
+                    })
+            });
+            next.unwrap_or(0.0)
+        }
+        Some(top) => millis_between(top, cursor),
+        // The unit after the cursor ends past 9999.
+        None => match (step_back(steps + 1, 1), shifted(cursor, -four_centuries)) {
+            (Some(top), Some(base)) => millis_between(top, base),
+            _ => 0.0,
+        },
+    };
+    let rest = millis_between(later.utc, cursor);
     let fraction = if span == 0.0 { 0.0 } else { rest / span };
     Ok((steps as f64 + fraction) * sign)
 }
 
-/// Move a zoned instant by whole calendar days, keeping the wall-clock time.
-fn add_days_in_zone(dt: DateTime<Tz>, days: i64) -> DateTime<Tz> {
-    let tz = dt.timezone();
-    Duration::try_days(days)
-        .and_then(|d| dt.naive_local().checked_add_signed(d))
-        .and_then(|naive| resolve_from(naive, offset_of(&dt), tz).ok())
-        .map(|utc| utc.with_timezone(&tz))
-        .unwrap_or(dt)
+/// Move a zoned instant by whole calendar days, keeping the wall-clock time;
+/// `None` past the years a value can hold.
+fn add_days_in_zone(tz: &TimeZone, dt: Wall, days: i64) -> Option<Wall> {
+    let hours = days.checked_mul(24)?;
+    let naive = shifted(dt.clock, SignedDuration::from_hours(hours))?;
+    let utc = resolve_from(naive, dt.offset, tz).ok()?;
+    Wall::of(tz, utc).ok()
 }
 
 /// Get the UTC offset in minutes for a given zone at a given UTC instant.
 pub fn zone_offset(utc_iso: &str, zone: &str) -> Result<i32, String> {
     let dt = parse_iso(utc_iso)?;
-    let tz: Tz = zone
-        .parse()
-        .map_err(|_| format!("Unknown timezone: {}", zone))?;
-    let local = dt.with_timezone(&tz);
-    Ok(local.offset().fix().local_minus_utc() / 60)
-}
-
-/// Add months to a `NaiveDateTime`, clamping the day to the target month's
-/// max (same as the UTC `add_months` but on NaiveDateTime for zone-local use).
-fn add_months_naive(dt: NaiveDateTime, months: i64) -> NaiveDateTime {
-    checked_add_months(dt, months).unwrap_or(dt)
+    let tz = known_zone(zone)?;
+    Ok(Wall::of(&tz, dt)?.offset_seconds() / 60)
 }
 
 /// Move by whole months, clamping the day to the target month's last one;
-/// `None` when the year leaves what an `i32` holds.
-fn checked_add_months(dt: NaiveDateTime, months: i64) -> Option<NaiveDateTime> {
-    let month0 = i64::from(dt.month0()).checked_add(months)?;
-    let year = i32::try_from(i64::from(dt.year()).checked_add(month0.div_euclid(12))?).ok()?;
-    let month = u32::try_from(month0.rem_euclid(12) + 1).ok()?;
-    let day = dt.day().min(days_in_month(year, month));
+/// `None` past the years a value can hold.
+fn checked_add_months(dt: DateTime, months: i64) -> Option<DateTime> {
+    let month0 = i64::from(dt.month() - 1).checked_add(months)?;
+    let year = i16::try_from(i64::from(dt.year()).checked_add(month0.div_euclid(12))?).ok()?;
+    let month = i8::try_from(month0.rem_euclid(12) + 1).ok()?;
+    let first = Date::new(year, month, 1).ok()?;
+    let day = dt.day().min(first.days_in_month());
     // Nanoseconds carried through: month arithmetic moves the DATE, it does not
     // truncate the instant. Dropping them silently rounded every timestamp to the
     // whole second.
-    NaiveDate::from_ymd_opt(year, month, day)
-        .and_then(|d| d.and_hms_nano_opt(dt.hour(), dt.minute(), dt.second(), dt.nanosecond()))
+    Date::new(year, month, day)
+        .ok()
+        .map(|date| date.to_datetime(dt.time()))
+}
+
+/// The wall clock in `tz` of a UTC instant; `None` past the years a value can
+/// hold.
+pub(crate) fn local_clock(tz: &TimeZone, utc: DateTime) -> Option<DateTime> {
+    Wall::of(tz, utc).ok().map(|wall| wall.clock)
 }
 
 /// The zone's UTC offset, in seconds, at a UTC wall-clock instant.
-pub(crate) fn offset_seconds_at(tz: Tz, utc: NaiveDateTime) -> i64 {
-    i64::from(tz.offset_from_utc_datetime(&utc).fix().local_minus_utc())
+///
+/// The last hours of 9999-12-31 lie past `Timestamp::MAX`; they are read at
+/// that bound, where the zone's rules have no change of time left to make.
+pub(crate) fn offset_seconds_at(tz: &TimeZone, utc: DateTime) -> i64 {
+    let instant = Offset::UTC.to_timestamp(utc).unwrap_or(if utc.year() > 0 {
+        Timestamp::MAX
+    } else {
+        Timestamp::MIN
+    });
+    i64::from(tz.to_offset(instant).seconds())
 }
 
-/// The UTC instant (as a naive UTC date-time) for a wall-clock time, starting
-/// from a guessed offset `o` (seconds) — Luxon's `fixOffset`. In an overlap it
-/// keeps `o` when `o` is one of the two offsets; in a gap it reads the time
-/// with the offset in force before the gap, which moves it forward by the size
-/// of the gap whatever that size is.
-pub(crate) fn fix_offset(local: NaiveDateTime, o: i64, tz: Tz) -> Option<NaiveDateTime> {
-    let utc_guess = local.checked_sub_signed(Duration::try_seconds(o)?)?;
+/// The UTC instant (as a UTC wall clock) for a wall-clock time, starting from a
+/// guessed offset `o` (seconds) — Luxon's `fixOffset`. In an overlap it keeps
+/// `o` when `o` is one of the two offsets; in a gap it reads the time with the
+/// offset in force before the gap, which moves it forward by the size of the
+/// gap whatever that size is.
+pub(crate) fn fix_offset(local: DateTime, o: i64, tz: &TimeZone) -> Option<DateTime> {
+    let utc_guess = shifted(local, SignedDuration::from_secs(-o))?;
     let o2 = offset_seconds_at(tz, utc_guess);
     if o == o2 {
         return Some(utc_guess);
     }
-    let utc_guess = utc_guess.checked_sub_signed(Duration::try_seconds(o2 - o)?)?;
+    let utc_guess = shifted(utc_guess, SignedDuration::from_secs(o - o2))?;
     let o3 = offset_seconds_at(tz, utc_guess);
     if o2 == o3 {
         return Some(utc_guess);
     }
-    local.checked_sub_signed(Duration::try_seconds(o2.min(o3))?)
+    shifted(local, SignedDuration::from_secs(-o2.min(o3)))
 }
 
-/// Resolve a zone-local NaiveDateTime back to a UTC instant. Handles DST
+/// How a wall clock reads in a zone: once, twice (an overlap, of which the
+/// engine always takes the earlier instant), or not at all (a gap).
+pub(crate) enum LocalTime {
+    Single(DateTime),
+    /// The earlier of the two instants.
+    Ambiguous(DateTime),
+    Gap,
+}
+
+/// The UTC instants a wall clock names in a zone.
+pub(crate) fn local_time(tz: &TimeZone, local: DateTime) -> LocalTime {
+    let at = |offset: Offset| {
+        shifted(
+            local,
+            -SignedDuration::from_secs(i64::from(offset.seconds())),
+        )
+    };
+    match tz.to_ambiguous_timestamp(local).offset() {
+        AmbiguousOffset::Unambiguous { offset } => {
+            at(offset).map_or(LocalTime::Gap, LocalTime::Single)
+        }
+        AmbiguousOffset::Fold { before, after } => match (at(before), at(after)) {
+            (Some(first), Some(second)) => LocalTime::Ambiguous(first.min(second)),
+            (Some(only), None) | (None, Some(only)) => LocalTime::Single(only),
+            (None, None) => LocalTime::Gap,
+        },
+        AmbiguousOffset::Gap { .. } => LocalTime::Gap,
+    }
+}
+
+/// Resolve a zone-local wall clock back to a UTC instant. Handles DST
 /// ambiguity via the "earliest" policy (spring-forward gaps → move forward,
 /// fall-back overlaps → pick the first occurrence).
-fn resolve_local(naive_local: NaiveDateTime, tz: Tz) -> Result<String, String> {
-    use chrono::LocalResult;
-    match tz.from_local_datetime(&naive_local) {
-        LocalResult::Single(dt) => Ok(to_iso(dt.with_timezone(&Utc))),
-        LocalResult::Ambiguous(first, _) => Ok(to_iso(first.with_timezone(&Utc))),
+fn resolve_local(naive_local: DateTime, tz: &TimeZone) -> Result<String, String> {
+    match local_time(tz, naive_local) {
+        LocalTime::Single(utc) | LocalTime::Ambiguous(utc) => Ok(to_iso(utc)),
         // In a gap: the offset before it, which moves the time forward by the
         // size of the gap (02:30 → 03:30), whatever that size is.
-        LocalResult::None => {
+        LocalTime::Gap => {
             let guess = offset_seconds_at(tz, naive_local);
             Ok(to_iso(resolve_from(naive_local, guess, tz)?))
         }
     }
 }
 
-/// The UTC offset of a zoned value, in seconds.
-fn offset_of(dt: &DateTime<Tz>) -> i64 {
-    i64::from(dt.offset().fix().local_minus_utc())
-}
-
 /// A wall clock reached by arithmetic on a value whose offset was `previous`,
 /// resolved as Luxon does: an overlap keeps the previous offset, a gap moves
 /// the time forward by the size of the gap.
-fn resolve_from(local: NaiveDateTime, previous: i64, tz: Tz) -> Result<DateTime<Utc>, String> {
-    fix_offset(local, previous, tz)
-        .map(|utc| utc.and_utc())
-        .ok_or_else(out_of_range)
+fn resolve_from(local: DateTime, previous: i64, tz: &TimeZone) -> Result<DateTime, String> {
+    fix_offset(local, previous, tz).ok_or_else(out_of_range)
 }
 
 /// Convert a **local** naive datetime (e.g. "2026-07-16T00:00:00") to a UTC
@@ -498,13 +763,11 @@ fn resolve_from(local: NaiveDateTime, previous: i64, tz: Tz) -> Result<DateTime<
 pub fn from_local(naive_iso: &str, zone: &str) -> Result<String, String> {
     // Strip any offset/Z suffix the caller may have left on — we want naive.
     let clean = naive_iso.trim_end_matches('Z').trim();
-    let naive = NaiveDateTime::parse_from_str(clean, "%Y-%m-%dT%H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(clean, "%Y-%m-%d %H:%M:%S"))
+    let naive = grammar::datetime(clean, grammar::DATE_T_TIME)
+        .or_else(|_| grammar::datetime(clean, grammar::DATE_SPACE_TIME))
         .map_err(|e| format!("Invalid naive datetime '{}': {}", naive_iso, e))?;
-    let tz: Tz = zone
-        .parse()
-        .map_err(|_| format!("Unknown timezone: {}", zone))?;
-    resolve_local(naive, tz)
+    let tz = known_zone(zone)?;
+    resolve_local(naive, &tz)
 }
 
 /// Calendar-derived properties exposed in one shot so the TS layer can read
@@ -539,34 +802,38 @@ pub struct CalendarParts {
     pub is_leap_year: bool,
 }
 
+/// A calendar field as `u32`; every one is positive.
+fn field(value: impl Into<i32>) -> u32 {
+    u32::try_from(value.into()).unwrap_or_default()
+}
+
 pub fn calendar_parts(iso: &str) -> Result<CalendarParts, String> {
-    let dt = parse_iso(iso)?;
-    let nd = dt.naive_utc();
-    let iso_week = nd.iso_week();
-    let leap = NaiveDate::from_ymd_opt(nd.year(), 2, 29).is_some();
+    let nd = parse_iso(iso)?;
+    let date = nd.date();
+    let iso_week = date.iso_week_date();
     Ok(CalendarParts {
-        year: nd.year(),
-        month: nd.month(),
-        day: nd.day(),
-        hour: nd.hour(),
-        minute: nd.minute(),
-        second: nd.second(),
-        millisecond: nd.and_utc().timestamp_subsec_millis(),
-        weekday: nd.weekday().number_from_monday(),
-        week_number: iso_week.week(),
-        week_year: iso_week.year(),
-        ordinal: nd.ordinal(),
-        quarter: ((nd.month() - 1) / 3) + 1,
-        days_in_month: days_in_month(nd.year(), nd.month()),
-        days_in_year: if leap { 366 } else { 365 },
-        is_leap_year: leap,
+        year: i32::from(nd.year()),
+        month: field(nd.month()),
+        day: field(nd.day()),
+        hour: field(nd.hour()),
+        minute: field(nd.minute()),
+        second: field(nd.second()),
+        millisecond: field(nd.subsec_nanosecond() / 1_000_000),
+        weekday: field(date.weekday().to_monday_one_offset()),
+        week_number: field(iso_week.week()),
+        week_year: i32::from(iso_week.year()),
+        ordinal: field(date.day_of_year()),
+        quarter: field((nd.month() - 1) / 3 + 1),
+        days_in_month: field(date.days_in_month()),
+        days_in_year: field(date.days_in_year()),
+        is_leap_year: date.in_leap_year(),
     })
 }
 
 /// Parse an RFC 2822 date string (email / HTTP legacy format).
 pub fn parse_rfc2822(input: &str) -> Result<String, String> {
-    DateTime::parse_from_rfc2822(input.trim())
-        .map(|dt| to_iso(dt.with_timezone(&Utc)))
+    grammar::rfc2822(input.trim())
+        .map(to_iso)
         .map_err(|e| format!("Invalid RFC 2822 date: {} ({})", input, e))
 }
 
@@ -577,6 +844,11 @@ fn leading_digits(s: &str, count: usize) -> Option<(u32, &str)> {
         return None;
     }
     Some((head.parse().ok()?, &s[count..]))
+}
+
+/// A parsed SQL field as the integer type a civil value takes.
+fn sql_field<T: TryFrom<u32>>(value: u32) -> Option<T> {
+    T::try_from(value).ok()
 }
 
 /// Parse a SQL date/time literal the way databases print them: `YYYY-MM-DD`
@@ -593,9 +865,12 @@ pub fn parse_sql(input: &str, zone: Option<&str>) -> Result<String, String> {
     let (month, rest) = leading_digits(rest, 2).ok_or_else(invalid)?;
     let rest = rest.strip_prefix('-').ok_or_else(invalid)?;
     let (day, mut rest) = leading_digits(rest, 2).ok_or_else(invalid)?;
-    let date = NaiveDate::from_ymd_opt(year as i32, month, day).ok_or_else(invalid)?;
+    let date = match (sql_field(year), sql_field(month), sql_field(day)) {
+        (Some(y), Some(m), Some(d)) => Date::new(y, m, d).map_err(|_| invalid())?,
+        _ => return Err(invalid()),
+    };
 
-    let mut time = chrono::NaiveTime::MIN;
+    let mut time = Time::midnight();
     if let Some(after) = rest.strip_prefix([' ', 'T']) {
         let (hour, r) = leading_digits(after, 2).ok_or_else(invalid)?;
         let r = r.strip_prefix(':').ok_or_else(invalid)?;
@@ -616,25 +891,32 @@ pub fn parse_sql(input: &str, zone: Option<&str>) -> Result<String, String> {
                 r = &fraction[digits..];
             }
         }
-        time = chrono::NaiveTime::from_hms_nano_opt(hour, minute, second, nanos)
-            .ok_or_else(invalid)?;
+        time = match (
+            sql_field(hour),
+            sql_field(minute),
+            sql_field(second),
+            sql_field(nanos),
+        ) {
+            (Some(h), Some(m), Some(sec), Some(ns)) => {
+                Time::new(h, m, sec, ns).map_err(|_| invalid())?
+            }
+            _ => return Err(invalid()),
+        };
         rest = r;
     }
-    let wall = date.and_time(time);
+    let wall = date.to_datetime(time);
 
     let suffix = rest.strip_prefix(' ').unwrap_or(rest);
     let instant = if suffix.is_empty() {
         match zone {
-            None => Utc.from_utc_datetime(&wall),
+            None => wall,
             Some(name) => {
-                let tz: Tz = name
-                    .parse()
-                    .map_err(|_| format!("Unknown timezone: {}", name))?;
-                return resolve_local(in_range(wall)?, tz);
+                let tz = known_zone(name)?;
+                return resolve_local(in_range(wall)?, &tz);
             }
         }
     } else if suffix.eq_ignore_ascii_case("z") {
-        Utc.from_utc_datetime(&wall)
+        wall
     } else if let Some(sign) = suffix.chars().next().filter(|c| *c == '+' || *c == '-') {
         let (hours, r) = leading_digits(&suffix[1..], 2).ok_or_else(invalid)?;
         let r = r.strip_prefix(':').unwrap_or(r);
@@ -650,21 +932,12 @@ pub fn parse_sql(input: &str, zone: Option<&str>) -> Result<String, String> {
         if hours > 23 || minutes > 59 {
             return Err(invalid());
         }
-        let seconds = i32::try_from(hours * 3600 + minutes * 60).map_err(|_| invalid())?;
-        let offset = if sign == '-' {
-            chrono::FixedOffset::west_opt(seconds)
-        } else {
-            chrono::FixedOffset::east_opt(seconds)
-        }
-        .ok_or_else(invalid)?;
-        offset
-            .from_local_datetime(&wall)
-            .single()
-            .ok_or_else(invalid)?
-            .with_timezone(&Utc)
+        let seconds = i64::from(hours * 3600 + minutes * 60);
+        let east = if sign == '-' { -seconds } else { seconds };
+        shifted(wall, SignedDuration::from_secs(-east)).ok_or_else(out_of_range)?
     } else {
-        let tz: Tz = suffix.parse().map_err(|_| invalid())?;
-        return resolve_local(in_range(wall)?, tz);
+        let tz = lookup_zone(suffix).ok_or_else(invalid)?;
+        return resolve_local(in_range(wall)?, &tz);
     };
     Ok(to_iso(in_range(instant)?))
 }
@@ -674,18 +947,16 @@ pub fn parse_http(input: &str) -> Result<String, String> {
     // RFC 7231 §7.1.1.1 defines three formats — try them in order.
     let s = input.trim();
     // Preferred: IMF-fixdate (same as RFC 2822 with "GMT")
-    if let Ok(dt) = DateTime::parse_from_rfc2822(s) {
-        return Ok(to_iso(dt.with_timezone(&Utc)));
+    if let Ok(dt) = grammar::rfc2822(s) {
+        return Ok(to_iso(dt));
     }
     // RFC 850 format: Sunday, 02-Apr-26 14:00:00 GMT
-    if let Ok(nd) =
-        NaiveDateTime::parse_from_str(s.trim_end_matches(" GMT"), "%A, %d-%b-%y %H:%M:%S")
-    {
-        return Ok(to_iso(Utc.from_utc_datetime(&nd)));
+    if let Ok(nd) = grammar::datetime(s.trim_end_matches(" GMT"), grammar::RFC_850) {
+        return Ok(to_iso(nd));
     }
     // asctime: Mon Apr  2 14:00:00 2026
-    if let Ok(nd) = NaiveDateTime::parse_from_str(s, "%a %b %e %H:%M:%S %Y") {
-        return Ok(to_iso(Utc.from_utc_datetime(&nd)));
+    if let Ok(nd) = grammar::datetime(s, grammar::ASCTIME) {
+        return Ok(to_iso(nd));
     }
     Err(format!("Invalid HTTP date: {}", input))
 }
@@ -702,30 +973,17 @@ pub fn rrule_expand(
     rrule::expand(start_iso, rrule, limit, tzid)
 }
 
-fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        4 | 6 | 9 | 11 => 30,
-        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
-        2 => 28,
-        _ => 31,
-    }
+/// An instant written as RFC 3339 or as a `YYYY-MM-DD[ HH:MM:SS]` UTC wall
+/// clock, as its UTC wall clock.
+fn parse_iso(input: &str) -> Result<DateTime, String> {
+    grammar::rfc3339(input)
+        .or_else(|_| grammar::datetime(input, grammar::DATE_SPACE_TIME))
+        .or_else(|_| grammar::date(input, grammar::DATE).map(|d| d.to_datetime(Time::midnight())))
+        .map_err(|_| format!("Invalid ISO date-time: {}", input))
 }
 
-fn parse_iso(input: &str) -> Result<DateTime<Utc>, String> {
-    if let Ok(dt) = DateTime::parse_from_rfc3339(input) {
-        return Ok(dt.with_timezone(&Utc));
-    }
-    if let Ok(nd) = NaiveDateTime::parse_from_str(input, "%Y-%m-%d %H:%M:%S") {
-        return Ok(Utc.from_utc_datetime(&nd));
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(input, "%Y-%m-%d") {
-        return Ok(Utc.from_utc_datetime(&d.and_time(chrono::NaiveTime::MIN)));
-    }
-    Err(format!("Invalid ISO date-time: {}", input))
-}
-
-fn to_iso(dt: DateTime<Utc>) -> String {
-    // ALWAYS `Millis`, even when they are zero: `2026-04-08T14:00:00.000Z`.
+fn to_iso(dt: DateTime) -> String {
+    // ALWAYS milliseconds, even when they are zero: `2026-04-08T14:00:00.000Z`.
     //
     // That is what Luxon's `toISO()` returns, and therefore what a serialized
     // model reads under `@adonisjs/lucid`. The compact form is Luxon's opt-in
@@ -735,7 +993,7 @@ fn to_iso(dt: DateTime<Utc>) -> String {
     // to strip `.000` independently, each justified by matching the other, and
     // an rrule expansion therefore disagreed with `DateTime.toISO()` on the same
     // instant — the same value, two literals, across the NAPI boundary.
-    dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    rfc3339(dt, 0, Fraction::Millis, true)
 }
 
 #[cfg(test)]

@@ -7,7 +7,20 @@ repository.workspace = true
 description = "Chronos date/time and recurrence engine in Rust"
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# The time zone database is bundled into the binary, for both builds, rather
+# than read from the host:
+# - the browser build (wasm32-unknown-unknown) has no file system to read one;
+# - the Node build runs in containers that often ship without /usr/share/zoneinfo
+#   (Alpine and distroless images), where reading the system copy would make
+#   every zone unknown;
+# - one copy, pinned by Cargo.lock, gives the same offsets on every host and in
+#   both builds — a recurrence expanded on the server and in the browser cannot
+#   disagree because two machines run different tzdata.
+# The data is updated by updating `jiff-tzdb`. No `tz-system`: the engine never
+# asks for the host's own zone, every call names one.
+jiff = { version = "1.0.1", default-features = false, features = [
+  "std",
+  "tzdb-bundle-always",
+  "tz-fat",
+  "perf-inline",
+] }
