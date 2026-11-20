@@ -34,7 +34,8 @@ for (const fn of ['add', 'diff', 'startOf', 'endOf', 'format', 'rruleExpand']) {
   }
 }
 
-if (binding.add('2026-01-15T10:00:00Z', 1, 'month') !== '2026-02-15T10:00:00Z') {
+// The engine always writes milliseconds, zero ones included.
+if (binding.add('2026-01-15T10:00:00.000Z', 1, 'month') !== '2026-02-15T10:00:00.000Z') {
   throw new Error('[chronos:napi] add smoke test failed')
 }
 
