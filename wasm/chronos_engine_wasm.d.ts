@@ -75,3 +75,14 @@ export function calendar_parts(iso: string): {
 	daysInYear: number;
 	isLeapYear: boolean;
 };
+export function easter_date(year: number): string;
+export function holidays(
+	year: number,
+	country: string,
+	region: string | undefined | null,
+): { date: string; key: string }[];
+export function is_holiday(
+	date: string,
+	country: string,
+	region: string | undefined | null,
+): boolean;

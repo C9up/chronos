@@ -81,6 +81,10 @@ if (isNode) {
 			rruleExpand: (start, rrule, limit, tzid) =>
 				wasm.rrule_expand(start, rrule, limit, tzid),
 			calendarParts: (iso) => wasm.calendar_parts(iso),
+			easterDate: (year) => wasm.easter_date(year),
+			holidays: (year, country, region) => wasm.holidays(year, country, region),
+			isHoliday: (date, country, region) =>
+				wasm.is_holiday(date, country, region),
 		};
 	} catch (e) {
 		loadError = e;

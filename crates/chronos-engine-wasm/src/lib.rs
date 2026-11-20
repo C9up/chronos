@@ -166,3 +166,34 @@ pub fn calendar_parts(iso: &str) -> Result<JsValue, JsValue> {
     )?;
     Ok(obj.into())
 }
+
+#[wasm_bindgen]
+pub fn easter_date(year: i32) -> Result<String, JsValue> {
+    chronos_engine::holidays::easter_date(year)
+        .map(|d| d.to_string())
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
+pub fn holidays(year: i32, country: &str, region: Option<String>) -> Result<JsValue, JsValue> {
+    let list = chronos_engine::holidays::holidays(year, country, region.as_deref())
+        .map_err(|e| JsValue::from_str(&e))?;
+    let arr = js_sys::Array::new();
+    for h in list {
+        let obj = js_sys::Object::new();
+        js_sys::Reflect::set(
+            &obj,
+            &"date".into(),
+            &JsValue::from_str(&h.date.to_string()),
+        )?;
+        js_sys::Reflect::set(&obj, &"key".into(), &JsValue::from_str(h.key))?;
+        arr.push(&obj);
+    }
+    Ok(arr.into())
+}
+
+#[wasm_bindgen]
+pub fn is_holiday(date: &str, country: &str, region: Option<String>) -> Result<bool, JsValue> {
+    chronos_engine::holidays::is_holiday(date, country, region.as_deref())
+        .map_err(|e| JsValue::from_str(&e))
+}

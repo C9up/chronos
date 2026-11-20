@@ -28,6 +28,13 @@ export interface ZonedOutputNapi {
 	zoneName: string;
 }
 
+export interface HolidayNapi {
+	/** The calendar date, `YYYY-MM-DD`. */
+	date: string;
+	/** The stable key the application translates. */
+	key: string;
+}
+
 export declare function add(iso: string, amount: number, unit: string): string;
 
 export declare function diff(aIso: string, bIso: string, unit: string): number;
@@ -89,3 +96,17 @@ export declare function rruleExpand(
 	limit: number,
 	tzid?: string | undefined | null,
 ): Array<string>;
+
+export declare function easterDate(year: number): string;
+
+export declare function holidays(
+	year: number,
+	country: string,
+	region?: string | undefined | null,
+): Array<HolidayNapi>;
+
+export declare function isHoliday(
+	date: string,
+	country: string,
+	region?: string | undefined | null,
+): boolean;

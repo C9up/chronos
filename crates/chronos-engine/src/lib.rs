@@ -3,6 +3,7 @@ use chrono::{
 };
 use chrono_tz::Tz;
 
+pub mod holidays;
 pub mod rrule;
 
 /// Years a value may carry: what a four-digit ISO 8601 year can write, so every

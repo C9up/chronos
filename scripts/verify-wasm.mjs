@@ -43,7 +43,7 @@ for (const fn of ['add', 'diff', 'start_of', 'end_of', 'format',
   'validate_timezone', 'to_zone', 'add_in_zone', 'start_of_in_zone',
   'end_of_in_zone', 'diff_in_zone', 'zone_offset', 'from_local',
   'parse_rfc2822', 'parse_sql', 'parse_http', 'rrule_expand',
-  'calendar_parts']) {
+  'calendar_parts', 'easter_date', 'holidays', 'is_holiday']) {
   if (typeof wasm[fn] !== 'function') {
     throw new Error(`${TAG} invalid exports: missing ${fn}()`)
   }
@@ -78,6 +78,23 @@ expectEqual(
   wasm.rrule_expand('2026-01-15T10:00:00Z', 'FREQ=DAILY;COUNT=2', 10, undefined),
   ['2026-01-15T10:00:00.000Z', '2026-01-16T10:00:00.000Z'],
 )
+expectEqual(
+  'rrule_expand (EXDATE removes an occurrence)',
+  wasm.rrule_expand(
+    undefined,
+    'DTSTART:20260115T100000Z\nRRULE:FREQ=DAILY;COUNT=3\nEXDATE:20260116T100000Z',
+    10,
+    undefined,
+  ),
+  ['2026-01-15T10:00:00.000Z', '2026-01-17T10:00:00.000Z'],
+)
+expectEqual('easter_date', wasm.easter_date(2026), '2026-04-05')
+expectEqual(
+  'is_holiday (cantonal rule)',
+  wasm.is_holiday('2026-09-21', 'CH', 'VD'),
+  true,
+)
+
 // Hostile input comes back as an error, never a trap: the browser build has no
 // catch_unwind, so a panic in the engine kills the module instead.
 {

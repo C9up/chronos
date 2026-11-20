@@ -193,3 +193,44 @@ where
         Err(_) => Err(Error::from_reason("Internal panic in chronos engine")),
     }
 }
+
+#[napi(object)]
+pub struct HolidayNapi {
+    /// The calendar date, `YYYY-MM-DD`.
+    pub date: String,
+    /// The stable key the application translates.
+    pub key: String,
+}
+
+#[napi]
+pub fn easter_date(year: i32) -> Result<String> {
+    wrap_string(|| chronos_engine::holidays::easter_date(year).map(|d| d.to_string()))
+}
+
+#[napi]
+pub fn holidays(year: i32, country: String, region: Option<String>) -> Result<Vec<HolidayNapi>> {
+    let result =
+        catch_unwind(|| chronos_engine::holidays::holidays(year, &country, region.as_deref()));
+    match result {
+        Ok(Ok(list)) => Ok(list
+            .into_iter()
+            .map(|h| HolidayNapi {
+                date: h.date.to_string(),
+                key: h.key.to_string(),
+            })
+            .collect()),
+        Ok(Err(e)) => Err(Error::from_reason(e)),
+        Err(_) => Err(Error::from_reason("Internal panic in chronos engine")),
+    }
+}
+
+#[napi]
+pub fn is_holiday(date: String, country: String, region: Option<String>) -> Result<bool> {
+    let result =
+        catch_unwind(|| chronos_engine::holidays::is_holiday(&date, &country, region.as_deref()));
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(e)) => Err(Error::from_reason(e)),
+        Err(_) => Err(Error::from_reason("Internal panic in chronos engine")),
+    }
+}

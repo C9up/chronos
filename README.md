@@ -216,6 +216,39 @@ occurrences come back, and iteration ends at year 9999, so an unsatisfiable
 rule answers `[]` in milliseconds. Unknown properties and malformed parts are
 refused.
 
+## Public holidays and Easter
+
+```ts
+import { easterDate, holidays, isHoliday } from '@c9up/chronos'
+
+easterDate(2026)                                   // '2026-04-05'
+holidays(2026, { country: 'FR' })                  // [{ date: '2026-01-01', key: 'new_year' }, …]
+holidays(2026, { country: 'CH', region: 'VD' })    // federal days + Vaud's
+isHoliday('2026-09-21', { country: 'CH', region: 'VD' })   // true: Federal Fast Monday
+isHoliday(DateTime.now().setZone('Europe/Zurich'), { country: 'CH', region: 'GE' })
+```
+
+Computed by the engine, in Node and in the browser alike. `country` is `FR`
+(its eleven national days) or `CH`: without a `region` its three federal days
+(1 January, 1 August, 25 December), with one a canton's two-letter code
+(`SWISS_CANTONS`) adding that canton's days: Easter Monday, Ascension and Whit
+Monday everywhere, then its own, fixed (Saint Berchtold, Saint Stephen,
+Assumption, All Saints, …) or moving (Good Friday, Corpus Christi, Federal Fast
+Monday in Vaud and Neuchâtel, the Geneva Fast, the Näfelser Fahrt in Glarus).
+
+- Each holiday has a stable `key` (`easter_monday`, `federal_fast_monday`, …)
+  for the application to translate; chronos names none in any language.
+- Two holidays on one day are both listed (Ascension on 1 May, 2008).
+- Neuchâtel's 2 January and 26 December count only when 1 January / 25
+  December is a Sunday. The Näfelser Fahrt is the first Thursday of April, one
+  week later when that Thursday falls in Holy Week.
+- A `DateTime` is read on its own wall clock; a string must be `YYYY-MM-DD`.
+- An unknown country or canton is refused (`E_CHRONOS_UNKNOWN_COUNTRY`,
+  `E_CHRONOS_UNKNOWN_REGION`) rather than answered with no holiday; the Easter
+  date is computed for 1583-9999 (`E_CHRONOS_INVALID_YEAR`).
+- The cantonal table is today's calendar applied to every year: it does not
+  know when a holiday was instituted.
+
 ## Ranges
 
 For the cases where a plain `{ start, end }` pair is enough:

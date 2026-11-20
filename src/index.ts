@@ -30,6 +30,19 @@ export type {
 	DurationUnitLike,
 } from "./Duration.js";
 export { Duration } from "./Duration.js";
+export type {
+	Holiday,
+	HolidayCountry,
+	HolidayKey,
+	HolidayOptions,
+	SwissCanton,
+} from "./holidays.js";
+export {
+	easterDate,
+	holidays,
+	isHoliday,
+	SWISS_CANTONS,
+} from "./holidays.js";
 export { Interval } from "./Interval.js";
 export type { ExpandRRuleOptions, RRuleBuild } from "./rrule.js";
 export { expandRRule, toRRuleString } from "./rrule.js";
