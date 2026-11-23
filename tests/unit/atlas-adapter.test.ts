@@ -62,11 +62,17 @@ describe("dateTimeAtlasAdapter", () => {
 			expect(out).toBe(original);
 		});
 
-		it("throws TypeError on boolean / object / array inputs (the offending type appears in the message)", () => {
-			expect(() => dateTimeAtlasAdapter.consume(true)).toThrow(TypeError);
+		it("refuses boolean / object / array inputs (the offending type appears in the message)", () => {
+			expect(() => dateTimeAtlasAdapter.consume(true)).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_COLUMN_VALUE" }),
+			);
 			expect(() => dateTimeAtlasAdapter.consume(true)).toThrow(/boolean/);
-			expect(() => dateTimeAtlasAdapter.consume({})).toThrow(TypeError);
-			expect(() => dateTimeAtlasAdapter.consume([])).toThrow(TypeError);
+			expect(() => dateTimeAtlasAdapter.consume({})).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_COLUMN_VALUE" }),
+			);
+			expect(() => dateTimeAtlasAdapter.consume([])).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_COLUMN_VALUE" }),
+			);
 		});
 	});
 
@@ -82,8 +88,10 @@ describe("dateTimeAtlasAdapter", () => {
 			expect(dateTimeAtlasAdapter.prepare(undefined)).toBeNull();
 		});
 
-		it("throws TypeError when called with a JS Date — message embeds [object Date] AND the wrap hint", () => {
-			expect(() => dateTimeAtlasAdapter.prepare(new Date())).toThrow(TypeError);
+		it("refuses a JS Date, the message embeds [object Date] AND the wrap hint", () => {
+			expect(() => dateTimeAtlasAdapter.prepare(new Date())).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_COLUMN_VALUE" }),
+			);
 			// The offending runtime type must be embedded — see AC line 138.
 			expect(() => dateTimeAtlasAdapter.prepare(new Date())).toThrow(
 				/\[object Date\]/,
@@ -93,15 +101,21 @@ describe("dateTimeAtlasAdapter", () => {
 			);
 		});
 
-		it("throws TypeError when called with an ISO string", () => {
+		it("refuses an ISO string", () => {
 			expect(() =>
 				dateTimeAtlasAdapter.prepare("2026-04-30T12:00:00.000Z"),
-			).toThrow(TypeError);
+			).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_COLUMN_VALUE" }),
+			);
 		});
 
-		it("throws TypeError when called with a number / object", () => {
-			expect(() => dateTimeAtlasAdapter.prepare(42)).toThrow(TypeError);
-			expect(() => dateTimeAtlasAdapter.prepare({})).toThrow(TypeError);
+		it("refuses a number / object", () => {
+			expect(() => dateTimeAtlasAdapter.prepare(42)).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_COLUMN_VALUE" }),
+			);
+			expect(() => dateTimeAtlasAdapter.prepare({})).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_COLUMN_VALUE" }),
+			);
 		});
 	});
 
@@ -136,7 +150,7 @@ describe("dateTimeAtlasAdapter", () => {
 		it("refuses a year past 9999 at the door instead of failing later", () => {
 			expect(() =>
 				dateTimeAtlasAdapter.consume("+010000-01-01T00:00:00.000Z"),
-			).toThrow(RangeError);
+			).toThrow(expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }));
 			expect(() =>
 				dateTimeAtlasAdapter.consume(new Date(253402300800000)),
 			).toThrow(/out of range/);

@@ -27,6 +27,7 @@
  */
 
 import { DateTime } from "./DateTime.js";
+import { E_CHRONOS_INVALID_COLUMN_VALUE } from "./errors.js";
 
 /**
  * Cross-realm-safe `DateTime` check. Returns `true` if `value` is either:
@@ -134,17 +135,17 @@ export const dateTimeAtlasAdapter = Object.freeze({
 		if (typeof raw === "string") return new DateTime(raw);
 		if (typeof raw === "number") return DateTime.fromMillis(raw);
 		if (typeof raw === "bigint") return DateTime.fromMillis(Number(raw));
-		throw new TypeError(
+		throw new E_CHRONOS_INVALID_COLUMN_VALUE([
 			`dateTimeAtlasAdapter.consume: expected string | Date | DateTime | number | bigint | null, got ${typeof raw}`,
-		);
+		]);
 	},
 	prepare(value: unknown): string | null {
 		if (value === null || value === undefined) return null;
 		if (!isDateTimeLike(value)) {
-			throw new TypeError(
+			throw new E_CHRONOS_INVALID_COLUMN_VALUE([
 				`dateTimeAtlasAdapter.prepare: expected a DateTime instance, got ${typeof value === "object" ? Object.prototype.toString.call(value) : typeof value}. ` +
 					"Wrap the value with `new DateTime(...)` before assigning to a column tagged with this adapter.",
-			);
+			]);
 		}
 		// The UTC form whatever the value's zone: `toISO()` writes a zoned value
 		// with its local offset (as Luxon does), and stored text has to sort and

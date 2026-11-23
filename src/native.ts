@@ -6,6 +6,20 @@
  * for a pure-TS fallback.
  */
 
+import type { ErrorClass } from "@c9up/flare";
+import {
+	E_CHRONOS_ENGINE_REQUIRED,
+	E_CHRONOS_INTERNAL,
+	E_CHRONOS_INVALID_DATE,
+	E_CHRONOS_INVALID_YEAR,
+	E_CHRONOS_OUT_OF_RANGE,
+	E_CHRONOS_UNKNOWN_COUNTRY,
+	E_CHRONOS_UNKNOWN_REGION,
+	E_CHRONOS_UNKNOWN_ZONE,
+	E_CHRONOS_UNREADABLE_RRULE,
+	E_CHRONOS_UNSUPPORTED_UNIT,
+} from "./errors.js";
+
 /**
  * The engine's surface, as the Rust declares it.
  *
@@ -91,15 +105,93 @@ if (isNode) {
 	}
 }
 
+/** The codes the engine writes at the start of a message (`E_X: text`). */
+const ENGINE_CODES = new Map<string, ErrorClass<[string]>>([
+	["E_CHRONOS_INVALID_YEAR", E_CHRONOS_INVALID_YEAR],
+	["E_CHRONOS_UNKNOWN_COUNTRY", E_CHRONOS_UNKNOWN_COUNTRY],
+	["E_CHRONOS_UNKNOWN_REGION", E_CHRONOS_UNKNOWN_REGION],
+	["E_CHRONOS_INVALID_DATE", E_CHRONOS_INVALID_DATE],
+]);
+
+/** Which chronos error an engine message without a code stands for. */
+function uncodedEngineError(
+	method: string,
+	message: string,
+): ErrorClass<[string]> | undefined {
+	if (/^Unknown (?:IANA )?timezone: /.test(message))
+		return E_CHRONOS_UNKNOWN_ZONE;
+	if (/out of range: years are limited to|is outside 0000-9999/.test(message))
+		return E_CHRONOS_OUT_OF_RANGE;
+	if (message === "Internal panic in chronos engine") return E_CHRONOS_INTERNAL;
+	if (method === "rruleExpand") return E_CHRONOS_UNREADABLE_RRULE;
+	if (message.startsWith("Unsupported unit: "))
+		return E_CHRONOS_UNSUPPORTED_UNIT;
+	if (
+		/^Invalid (?:SQL datetime|RFC 2822 date|HTTP date|ISO date-time|naive datetime)[: ]/.test(
+			message,
+		)
+	)
+		return E_CHRONOS_INVALID_DATE;
+	return undefined;
+}
+
+/**
+ * The engine refuses with a plain message: an `Error` from NAPI, a string
+ * from WASM. Read it back into the chronos error it stands for, with the
+ * engine's failure as `cause`; a message chronos does not recognise is
+ * rethrown as it came.
+ */
+function fromEngine(method: string, failure: unknown): unknown {
+	const message =
+		failure instanceof Error
+			? failure.message
+			: typeof failure === "string"
+				? failure
+				: undefined;
+	if (message === undefined) return failure;
+	const coded = /^(E_CHRONOS_[A-Z_]+): /.exec(message);
+	const codedClass = coded ? ENGINE_CODES.get(coded[1] ?? "") : undefined;
+	if (coded && codedClass) {
+		return new codedClass([message.slice(coded[0].length)], {
+			cause: failure,
+		});
+	}
+	const ErrorClass = uncodedEngineError(method, message);
+	return ErrorClass ? new ErrorClass([message], { cause: failure }) : failure;
+}
+
+/** The engine, with every call's refusal read back into a chronos error. */
+function guarded(engine: NativeChronos): NativeChronos {
+	const wrappers = new Map<PropertyKey, unknown>();
+	return new Proxy(engine, {
+		get(target, key) {
+			const known = wrappers.get(key);
+			if (known !== undefined) return known;
+			const value: unknown = Reflect.get(target, key);
+			if (typeof value !== "function") return value;
+			const method = String(key);
+			const wrapper = (...args: unknown[]): unknown => {
+				try {
+					return Reflect.apply(value, target, args);
+				} catch (failure) {
+					throw fromEngine(method, failure);
+				}
+			};
+			wrappers.set(key, wrapper);
+			return wrapper;
+		},
+	});
+}
+
+let guardedEngine: NativeChronos | undefined;
+
 export function nativeChronos(): NativeChronos {
 	if (!native) {
-		throw new Error(
-			`[CHRONOS_ENGINE_REQUIRED] The Chronos engine is required but not loaded.\n` +
-				`  Environment: ${isNode ? "Node" : "Browser"}\n` +
-				`  Reason: ${loadError ?? "binary not found"}\n` +
-				`  Fix (Node): cd packages/chronos && pnpm build:napi\n` +
-				`  Fix (Browser): cd packages/chronos && pnpm build:wasm`,
-		);
+		throw new E_CHRONOS_ENGINE_REQUIRED([
+			isNode ? "Node" : "Browser",
+			String(loadError ?? "binary not found"),
+		]);
 	}
-	return native;
+	guardedEngine ??= guarded(native);
+	return guardedEngine;
 }

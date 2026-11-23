@@ -10,11 +10,24 @@
  *
  * @implements Epic 36 — Chronos
  */
+
 import {
 	Duration,
 	type DurationObject,
 	type DurationUnit,
 } from "./Duration.js";
+import {
+	E_CHRONOS_CONFLICTING_FIELDS,
+	E_CHRONOS_INTERNAL,
+	E_CHRONOS_INVALID_ARGUMENT,
+	E_CHRONOS_INVALID_DATE,
+	E_CHRONOS_INVALID_LOCALE,
+	E_CHRONOS_INVALID_RANGE,
+	E_CHRONOS_INVALID_UNIT_VALUE,
+	E_CHRONOS_MISSING_UNIT,
+	E_CHRONOS_OUT_OF_RANGE,
+	E_CHRONOS_UNSUPPORTED_UNIT,
+} from "./errors.js";
 import { formatLuxon } from "./format.js";
 import { nativeChronos } from "./native.js";
 import {
@@ -167,22 +180,22 @@ interface WallClock {
 function assertWallClock(c: WallClock, raw: string): void {
 	const integer = (unit: string, value: number, min: number, max: number) => {
 		if (!Number.isInteger(value) || value < min || value > max) {
-			throw new RangeError(
+			throw new E_CHRONOS_INVALID_DATE([
 				`Invalid date '${raw}': ${unit} ${String(value)} is out of range (${min}-${max}).`,
-			);
+			]);
 		}
 	};
 	integer("year", c.year, 0, 9999);
 	if (!Number.isInteger(c.month) || c.month < 1 || c.month > 12) {
-		throw new RangeError(
+		throw new E_CHRONOS_INVALID_DATE([
 			`Invalid date '${raw}': there is no month ${String(c.month)}.`,
-		);
+		]);
 	}
 	const lastDay = daysInMonthOf(c.year, c.month);
 	if (!Number.isInteger(c.day) || c.day < 1 || c.day > lastDay) {
-		throw new RangeError(
+		throw new E_CHRONOS_INVALID_DATE([
 			`Invalid date '${raw}': ${MONTH_NAMES[c.month - 1]} ${c.year} has ${lastDay} days, so there is no day ${String(c.day)}.`,
-		);
+		]);
 	}
 	integer("hour", c.hour, 0, 23);
 	integer("minute", c.minute, 0, 59);
@@ -209,11 +222,13 @@ function wallClockMs(c: WallClock, zone: string): number {
 
 /** The canonical UTC ISO string of an instant, refusing what chronos cannot hold. */
 function isoOfMs(ms: number, input: () => string): string {
-	if (!Number.isFinite(ms)) throw new RangeError(`Invalid date ${input()}`);
+	if (!Number.isFinite(ms)) {
+		throw new E_CHRONOS_INVALID_DATE([`Invalid date ${input()}`]);
+	}
 	if (ms < MIN_MS || ms > MAX_MS) {
-		throw new RangeError(
+		throw new E_CHRONOS_OUT_OF_RANGE([
 			`Date ${input()} is out of range: years are limited to 0000-9999.`,
-		);
+		]);
 	}
 	return new Date(ms).toISOString();
 }
@@ -236,12 +251,14 @@ function resolveParsedFields(
 	const hasGregorian = f.year !== undefined || hasMonthDay;
 	const weekDefined = f.weekYear !== undefined || f.weekNumber !== undefined;
 	if ((hasGregorian || hasOrdinal) && weekDefined) {
-		throw new Error(
+		throw new E_CHRONOS_CONFLICTING_FIELDS([
 			"Can't mix weekYear/weekNumber units with year/month/day or ordinals",
-		);
+		]);
 	}
 	if (hasMonthDay && hasOrdinal) {
-		throw new Error("Can't mix ordinal dates with month/day");
+		throw new E_CHRONOS_CONFLICTING_FIELDS([
+			"Can't mix ordinal dates with month/day",
+		]);
 	}
 	let found = false;
 	const take = (given: number | undefined, current: number, min: number) => {
@@ -253,9 +270,9 @@ function resolveParsedFields(
 	};
 	const range = (unit: string, value: number, min: number, max: number) => {
 		if (!Number.isInteger(value) || value < min || value > max) {
-			throw new RangeError(
+			throw new E_CHRONOS_INVALID_DATE([
 				`Invalid date '${raw}': ${unit} ${String(value)} is out of range (${min}-${max}).`,
-			);
+			]);
 		}
 	};
 	const nowDay: CalendarDay = {
@@ -312,9 +329,9 @@ function resolveParsedFields(
 		hasGregorian &&
 		isoWeekday(out) !== f.weekday
 	) {
-		throw new RangeError(
+		throw new E_CHRONOS_INVALID_DATE([
 			`Invalid date '${raw}': weekday ${f.weekday} does not fall on ${pad(out.year, 4)}-${pad(out.month)}-${pad(out.day)}.`,
-		);
+		]);
 	}
 	return out;
 }
@@ -367,9 +384,9 @@ function instantOfParsed(
 function parseIso(raw: string, zone: string): string {
 	const m = ISO_8601.exec(raw);
 	if (!m) {
-		throw new RangeError(
+		throw new E_CHRONOS_INVALID_DATE([
 			`Invalid date '${raw}': expected ISO 8601 (YYYY-MM-DD, optionally with THH:mm[:ss[.SSS]] and an offset).`,
-		);
+		]);
 	}
 	const c: WallClock = {
 		year: Number(m[1]),
@@ -388,9 +405,9 @@ function parseIso(raw: string, zone: string): string {
 		const hours = Number(m[10]);
 		const minutes = Number(m[11] ?? 0);
 		if (hours > 23 || minutes > 59) {
-			throw new RangeError(
+			throw new E_CHRONOS_INVALID_DATE([
 				`Invalid date '${raw}': the offset is out of range.`,
-			);
+			]);
 		}
 		const sign = m[9] === "-" ? -1 : 1;
 		ms = utcMs(c) - sign * (hours * 60 + minutes) * 60_000;
@@ -406,9 +423,9 @@ function toIso(value: DateInput, zone = "UTC"): string {
 		return isoOfMs(value.getTime(), () => "(JS Date)");
 	}
 	if (typeof value !== "string") {
-		throw new TypeError(
+		throw new E_CHRONOS_INVALID_ARGUMENT([
 			`Invalid date input: expected a string, a Date or a DateTime, got ${typeof value}`,
-		);
+		]);
 	}
 	return parseIso(value, zone);
 }
@@ -433,7 +450,9 @@ function casualUnitMs(unit: string): number {
 	const ms = Object.hasOwn(CASUAL_UNIT_MS, singular)
 		? CASUAL_UNIT_MS[singular]
 		: undefined;
-	if (ms === undefined) throw new Error(`Unsupported unit: ${unit}`);
+	if (ms === undefined) {
+		throw new E_CHRONOS_UNSUPPORTED_UNIT([`Unsupported unit: ${unit}`]);
+	}
 	return ms;
 }
 
@@ -536,7 +555,9 @@ function relativeUnitOf(unit: unknown): RelativeUnit {
 		typeof unit === "string" && !unit.endsWith("s") ? `${unit}s` : unit;
 	const found = RELATIVE_UNITS.find((u) => u === plural);
 	if (found === undefined) {
-		throw new RangeError(`Unsupported relative unit: ${String(unit)}`);
+		throw new E_CHRONOS_UNSUPPORTED_UNIT([
+			`Unsupported relative unit: ${String(unit)}`,
+		]);
 	}
 	return found;
 }
@@ -558,9 +579,9 @@ function roundTo(value: number, digits: number, rounding: unknown): number {
 		case "ceil":
 			return Math.ceil(value * factor) / factor;
 		default:
-			throw new RangeError(
+			throw new E_CHRONOS_INVALID_ARGUMENT([
 				`Value rounding ${String(rounding)} is out of range`,
-			);
+			]);
 	}
 }
 
@@ -627,14 +648,18 @@ function diffRelative(
 		if (Math.abs(count) >= 1) return format(count, unit);
 	}
 	const last = opts.units.at(-1);
-	if (last === undefined) throw new RangeError("No unit to count in");
+	if (last === undefined) {
+		throw new E_CHRONOS_MISSING_UNIT(["No unit to count in"]);
+	}
 	return format(start.toMillis() > end.toMillis() ? -0 : 0, last);
 }
 
 function durationUnitOf(unit: string): DurationUnit {
 	const plural = unit.endsWith("s") ? unit : `${unit}s`;
 	const found = DIFF_ORDER.find((u) => u === plural);
-	if (found === undefined) throw new RangeError(`Unsupported unit: ${unit}`);
+	if (found === undefined) {
+		throw new E_CHRONOS_UNSUPPORTED_UNIT([`Unsupported unit: ${unit}`]);
+	}
 	return found;
 }
 
@@ -650,7 +675,9 @@ function isCalendarUnit(unit: DateUnit): boolean {
  */
 function formatFromIsoString(iso: string, pattern: string): string {
 	const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/.exec(iso);
-	if (!match) throw new Error(`Cannot parse ISO for format: ${iso}`);
+	if (!match) {
+		throw new E_CHRONOS_INTERNAL([`Cannot parse ISO for format: ${iso}`]);
+	}
 	// Every group in the pattern is required, so a match carries all six.
 	const [, y, mo, d, h, mi, s] = match;
 	if (
@@ -661,7 +688,7 @@ function formatFromIsoString(iso: string, pattern: string): string {
 		mi === undefined ||
 		s === undefined
 	) {
-		throw new Error(`Cannot parse ISO for format: ${iso}`);
+		throw new E_CHRONOS_INTERNAL([`Cannot parse ISO for format: ${iso}`]);
 	}
 	const tokens: Record<string, string> = {
 		YYYY: y,
@@ -706,7 +733,9 @@ function calendarPartsFromIso(iso: string): CalendarParts {
 	// Parse from ISO string directly — handles both UTC and zoned strings.
 	const isoMatch =
 		/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?/.exec(iso);
-	if (!isoMatch) throw new Error(`Cannot parse ISO for calendar: ${iso}`);
+	if (!isoMatch) {
+		throw new E_CHRONOS_INTERNAL([`Cannot parse ISO for calendar: ${iso}`]);
+	}
 	const year = Number(isoMatch[1]);
 	const month = Number(isoMatch[2]);
 	const day = Number(isoMatch[3]);
@@ -765,9 +794,14 @@ function calendarPartsFromIso(iso: string): CalendarParts {
 function normalizeRange(range: DateRange): { start: number; end: number } {
 	const start = toMs(range.start);
 	const end = toMs(range.end);
-	if (Number.isNaN(start) || Number.isNaN(end))
-		throw new Error("Invalid date range");
-	if (start > end) throw new Error("Invalid date range: start must be <= end");
+	if (Number.isNaN(start) || Number.isNaN(end)) {
+		throw new E_CHRONOS_INVALID_RANGE(["Invalid date range"]);
+	}
+	if (start > end) {
+		throw new E_CHRONOS_INVALID_RANGE([
+			"Invalid date range: start must be <= end",
+		]);
+	}
 	return { start, end };
 }
 function rangeContains(
@@ -910,7 +944,9 @@ export class DateTime {
 	}
 	static fromMillis(ms: number): DateTime {
 		if (typeof ms !== "number") {
-			throw new TypeError(`fromMillis expects a number, got ${typeof ms}`);
+			throw new E_CHRONOS_INVALID_ARGUMENT([
+				`fromMillis expects a number, got ${typeof ms}`,
+			]);
 		}
 		return new DateTime(new Date(ms));
 	}
@@ -918,9 +954,9 @@ export class DateTime {
 		// Same guard as fromMillis: `seconds * 1000` would turn "12" into 12 s
 		// and null into the epoch.
 		if (typeof seconds !== "number") {
-			throw new TypeError(
+			throw new E_CHRONOS_INVALID_ARGUMENT([
 				`fromSeconds expects a number, got ${seconds === null ? "null" : typeof seconds}`,
-			);
+			]);
 		}
 		return new DateTime(new Date(seconds * 1000));
 	}
@@ -928,7 +964,9 @@ export class DateTime {
 		return DateTime.fromSeconds(seconds);
 	}
 	static fromJSDate(date: Date): DateTime {
-		if (!Number.isFinite(date.getTime())) throw new Error("Invalid Date");
+		if (!Number.isFinite(date.getTime())) {
+			throw new E_CHRONOS_INVALID_DATE(["Invalid Date"]);
+		}
 		return new DateTime(date);
 	}
 	/**
@@ -1019,7 +1057,9 @@ export class DateTime {
 		options: { zone?: string; locale?: string } = {},
 	): DateTime {
 		if (typeof text !== "string" || typeof format !== "string") {
-			throw new TypeError("fromFormat requires an input string and a format");
+			throw new E_CHRONOS_INVALID_ARGUMENT([
+				"fromFormat requires an input string and a format",
+			]);
 		}
 		const zone = options.zone ?? "UTC";
 		assertZone(zone);
@@ -1029,9 +1069,9 @@ export class DateTime {
 			parsed === null ||
 			(Object.keys(parsed.fields).length === 0 && parsed.zone === undefined)
 		) {
-			throw new RangeError(
+			throw new E_CHRONOS_INVALID_DATE([
 				`Invalid date '${text}': it does not match the format '${format}'.`,
-			);
+			]);
 		}
 		if (parsed.zone !== undefined) assertZone(parsed.zone);
 		const wallZone = parsed.zone ?? zone;
@@ -1078,9 +1118,15 @@ export class DateTime {
 
 	/** A copy whose names (`toFormat`) and `toLocaleString` default use `locale`. */
 	setLocale(locale: string): DateTime {
-		const [canonical] = Intl.getCanonicalLocales(locale);
-		if (canonical === undefined)
-			throw new RangeError(`Invalid locale: ${locale}`);
+		let canonical: string | undefined;
+		try {
+			[canonical] = Intl.getCanonicalLocales(locale);
+		} catch (cause) {
+			throw new E_CHRONOS_INVALID_LOCALE([locale], { cause });
+		}
+		if (canonical === undefined) {
+			throw new E_CHRONOS_INVALID_LOCALE([locale]);
+		}
 		const out = this.#derive(this.#iso);
 		out.#locale = canonical;
 		return out;
@@ -1166,7 +1212,7 @@ export class DateTime {
 			);
 		}
 		if (unit === undefined) {
-			throw new TypeError("plus(amount, unit) needs a unit");
+			throw new E_CHRONOS_MISSING_UNIT(["plus(amount, unit) needs a unit"]);
 		}
 		return this.#plusUnit(amountOrDuration, unit);
 	}
@@ -1193,16 +1239,16 @@ export class DateTime {
 
 	#plusUnit(amount: number, unit: DateUnit): DateTime {
 		if (typeof amount !== "number" || !Number.isFinite(amount)) {
-			throw new RangeError(
+			throw new E_CHRONOS_INVALID_UNIT_VALUE([
 				`Invalid unit value ${String(amount)}: plus/minus take a finite number`,
-			);
+			]);
 		}
 		const unitMs = casualUnitMs(unit);
 		const whole = Math.trunc(amount);
 		if (!Number.isSafeInteger(whole)) {
-			throw new RangeError(
+			throw new E_CHRONOS_OUT_OF_RANGE([
 				`plus(${amount}, '${unit}') is out of range: years are limited to 0000-9999`,
-			);
+			]);
 		}
 		const n = nativeChronos();
 		const shifted =
@@ -1232,13 +1278,13 @@ export class DateTime {
 			return this.#plusDuration(duration.negate());
 		}
 		if (unit === undefined) {
-			throw new TypeError("minus(amount, unit) needs a unit");
+			throw new E_CHRONOS_MISSING_UNIT(["minus(amount, unit) needs a unit"]);
 		}
 		// Checked before negating: `-"1"` would turn a string into a number.
 		if (typeof amountOrDuration !== "number") {
-			throw new RangeError(
+			throw new E_CHRONOS_INVALID_UNIT_VALUE([
 				`Invalid unit value ${String(amountOrDuration)}: plus/minus take a finite number`,
-			);
+			]);
 		}
 		return this.#plusUnit(-amountOrDuration, unit);
 	}
@@ -1259,7 +1305,9 @@ export class DateTime {
 	): Duration {
 		const units = (Array.isArray(unit) ? unit : [unit]).map(durationUnitOf);
 		const ordered = DIFF_ORDER.filter((u) => units.includes(u));
-		if (ordered.length === 0) throw new RangeError("diff needs a unit");
+		if (ordered.length === 0) {
+			throw new E_CHRONOS_MISSING_UNIT(["diff needs a unit"]);
+		}
 		const o = DateTime.from(other).setZone(this.#zone);
 		const thisIsLater = this.toMillis() >= o.toMillis();
 		const earlier = thisIsLater ? o : this;

@@ -1,4 +1,10 @@
 import { type DateInput, DateTime } from "./DateTime.js";
+import {
+	E_CHRONOS_INVALID_ARGUMENT,
+	E_CHRONOS_INVALID_RRULE,
+	E_CHRONOS_INVALID_RRULE_LIMIT,
+	E_CHRONOS_RRULE_LIMIT_EXCEEDED,
+} from "./errors.js";
 import { nativeChronos } from "./native.js";
 
 export type RRuleWeekday = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
@@ -56,7 +62,7 @@ const BYDAY_TOKEN =
  * parts the caller never wrote.
  */
 function invalid(field: string, value: unknown): never {
-	throw new RangeError(`toRRuleString: invalid ${field} ${String(value)}`);
+	throw new E_CHRONOS_INVALID_RRULE([field, String(value)]);
 }
 
 function checkInteger(
@@ -104,7 +110,7 @@ function readUntil(value: unknown): DateTime {
 	try {
 		return DateTime.from(value);
 	} catch (cause) {
-		throw new RangeError(`toRRuleString: invalid until ${value}`, { cause });
+		throw new E_CHRONOS_INVALID_RRULE(["until", value], { cause });
 	}
 }
 
@@ -222,15 +228,10 @@ function readOptions(
 
 function checkLimit(limit: number): number {
 	if (!Number.isInteger(limit) || limit < 1) {
-		throw new RangeError(
-			`expandRRule(limit) must be a positive integer (got ${String(limit)})`,
-		);
+		throw new E_CHRONOS_INVALID_RRULE_LIMIT([String(limit)]);
 	}
 	if (limit > MAX_RRULE_EXPAND) {
-		throw new RangeError(
-			`expandRRule(limit=${limit}) exceeds the safety cap of ${MAX_RRULE_EXPAND}. ` +
-				"Page through the result set instead of asking for everything at once.",
-		);
+		throw new E_CHRONOS_RRULE_LIMIT_EXCEEDED([limit, MAX_RRULE_EXPAND]);
 	}
 	return limit;
 }
@@ -279,9 +280,9 @@ export function expandRRule(
 		);
 	}
 	if (typeof start !== "string") {
-		throw new TypeError(
+		throw new E_CHRONOS_INVALID_ARGUMENT([
 			"expandRRule(rule, options) takes the rule text, with its DTSTART line, as the first argument",
-		);
+		]);
 	}
 	const options = readOptions(rruleOrOptions);
 	return nativeChronos().rruleExpand(

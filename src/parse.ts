@@ -11,6 +11,7 @@
  * with chronos reads back.
  */
 
+import { E_CHRONOS_CONFLICTING_FIELDS } from "./errors.js";
 import {
 	isEnglish,
 	MACROS,
@@ -437,7 +438,9 @@ export function parseWithFormat(
 		index += groups;
 	}
 	if (matches.has("a") && matches.has("H")) {
-		throw new Error("Can't include meridiem when specifying 24-hour format");
+		throw new E_CHRONOS_CONFLICTING_FIELDS([
+			"Can't include meridiem when specifying 24-hour format",
+		]);
 	}
 	const num = (key: string): number | undefined => {
 		const value = matches.get(key);

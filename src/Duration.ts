@@ -9,6 +9,12 @@
  * @implements Story 36.8
  */
 
+import {
+	E_CHRONOS_INVALID_DURATION,
+	E_CHRONOS_INVALID_UNIT_VALUE,
+	E_CHRONOS_UNSUPPORTED_UNIT,
+} from "./errors.js";
+
 export interface DurationObject {
 	years?: number;
 	months?: number;
@@ -165,7 +171,9 @@ function normalizeUnit(unit: string): DurationUnit {
 		? UNIT_NAMES[key]
 		: undefined;
 	if (normalized === undefined) {
-		throw new RangeError(`Invalid duration unit: ${String(unit)}`);
+		throw new E_CHRONOS_UNSUPPORTED_UNIT([
+			`Invalid duration unit: ${String(unit)}`,
+		]);
 	}
 	return normalized;
 }
@@ -179,7 +187,9 @@ function normalizeUnit(unit: string): DurationUnit {
 function asNumber(value: unknown): number {
 	const numeric = Number(value);
 	if (typeof value === "boolean" || value === "" || !Number.isFinite(numeric)) {
-		throw new RangeError(`Invalid unit value ${String(value)}`);
+		throw new E_CHRONOS_INVALID_UNIT_VALUE([
+			`Invalid unit value ${String(value)}`,
+		]);
 	}
 	return numeric;
 }
@@ -187,9 +197,9 @@ function asNumber(value: unknown): number {
 /** Validate a duration-like object into canonical unit names. */
 function normalizeObject(obj: unknown): DurationObject {
 	if (typeof obj !== "object" || obj === null) {
-		throw new TypeError(
+		throw new E_CHRONOS_INVALID_DURATION([
 			`Invalid duration: expected an object of units, got ${typeof obj}`,
-		);
+		]);
 	}
 	const out: DurationObject = {};
 	for (const [key, value] of Object.entries(obj)) {
@@ -256,7 +266,9 @@ export class Duration {
 		// The all-optional grammar also matches a bare "P"/"PT": a duration
 		// needs at least one component. An explicit zero ("PT0S") still parses.
 		if (!m || m.slice(1).every((part) => part === undefined)) {
-			throw new RangeError(`Invalid ISO 8601 duration: ${String(iso)}`);
+			throw new E_CHRONOS_INVALID_DURATION([
+				`Invalid ISO 8601 duration: ${String(iso)}`,
+			]);
 		}
 		const [, y, mo, w, d, h, mi, sec, frac] = m;
 		// ISO 8601 requires a time component after "T"; Luxon lets "P1DT" through.
@@ -266,7 +278,9 @@ export class Duration {
 			mi === undefined &&
 			sec === undefined
 		) {
-			throw new RangeError(`Invalid ISO 8601 duration: ${iso}`);
+			throw new E_CHRONOS_INVALID_DURATION([
+				`Invalid ISO 8601 duration: ${iso}`,
+			]);
 		}
 		const negativePrefix = iso.startsWith("-");
 		const read = (part: string | undefined): number | undefined => {

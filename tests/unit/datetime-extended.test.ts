@@ -407,10 +407,10 @@ describe("chronos > DateTime > toRelative", () => {
 		// Through Reflect: what an untyped caller can send.
 		expect(() =>
 			Reflect.apply(t.toRelative, t, [{ base, rounding: "sideways" }]),
-		).toThrow(RangeError);
+		).toThrow(expect.objectContaining({ code: "E_CHRONOS_INVALID_ARGUMENT" }));
 		expect(() =>
 			Reflect.apply(t.toRelative, t, [{ base, unit: "fortnights" }]),
-		).toThrow(RangeError);
+		).toThrow(expect.objectContaining({ code: "E_CHRONOS_UNSUPPORTED_UNIT" }));
 	});
 });
 

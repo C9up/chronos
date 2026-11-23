@@ -287,17 +287,21 @@ describe("chronos > static factories (36.6)", () => {
 		(input) => {
 			expect(() =>
 				Reflect.apply(DateTime.fromSeconds, DateTime, [input]),
-			).toThrow(TypeError);
+			).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_ARGUMENT" }),
+			);
 			expect(() => Reflect.apply(DateTime.fromUnix, DateTime, [input])).toThrow(
-				TypeError,
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_ARGUMENT" }),
 			);
 		},
 	);
 
 	it("fromSeconds refuses a non-finite number", () => {
-		expect(() => DateTime.fromSeconds(Number.NaN)).toThrow(RangeError);
+		expect(() => DateTime.fromSeconds(Number.NaN)).toThrow(
+			expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }),
+		);
 		expect(() => DateTime.fromSeconds(Number.POSITIVE_INFINITY)).toThrow(
-			RangeError,
+			expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }),
 		);
 	});
 

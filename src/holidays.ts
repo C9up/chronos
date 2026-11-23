@@ -1,4 +1,5 @@
 import { DateTime } from "./DateTime.js";
+import { E_CHRONOS_INTERNAL, E_CHRONOS_INVALID_YEAR } from "./errors.js";
 import { nativeChronos } from "./native.js";
 
 /** The countries chronos has a public-holiday calendar for. */
@@ -131,7 +132,9 @@ export function holidays(year: number, options: HolidayOptions): Holiday[] {
 		.holidays(checkYear(year), options.country, options.region)
 		.map(({ date, key }) => {
 			if (!isHolidayKey(key)) {
-				throw new Error(`chronos engine returned an unknown holiday ${key}`);
+				throw new E_CHRONOS_INTERNAL([
+					`chronos engine returned an unknown holiday ${key}`,
+				]);
 			}
 			return { date, key };
 		});
@@ -153,9 +156,9 @@ export function isHoliday(
 /** The engine takes an i32: a fraction or a huge number is refused first. */
 function checkYear(year: number): number {
 	if (!Number.isInteger(year) || year < 1583 || year > 9999) {
-		throw new RangeError(
-			`E_CHRONOS_INVALID_YEAR: the Gregorian Easter date is computed for years 1583-9999, got ${year}`,
-		);
+		throw new E_CHRONOS_INVALID_YEAR([
+			`the Gregorian Easter date is computed for years 1583-9999, got ${year}`,
+		]);
 	}
 	return year;
 }

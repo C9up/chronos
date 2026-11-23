@@ -7,12 +7,18 @@
  *
  * @implements Story 36.9
  */
+
 import { type DateInput, DateTime, type DateUnit } from "./DateTime.js";
 import {
 	Duration,
 	type DurationObject,
 	type DurationUnit,
 } from "./Duration.js";
+import {
+	E_CHRONOS_INVALID_DURATION,
+	E_CHRONOS_INVALID_INTERVAL,
+	E_CHRONOS_UNSUPPORTED_UNIT,
+} from "./errors.js";
 
 /**
  * Milliseconds in one unit, refusing a unit it does not know.
@@ -43,9 +49,9 @@ function msPerUnit(unit: string, caller: string): number {
 	// Plural is the durations spelling; singular is the DateTime one.
 	const ms = MS_PER_UNIT[unit.endsWith("s") ? unit.slice(0, -1) : unit];
 	if (ms === undefined) {
-		throw new Error(
+		throw new E_CHRONOS_UNSUPPORTED_UNIT([
 			`${caller}: '${unit}' is not a unit. Use one of ${Object.keys(MS_PER_UNIT).join(", ")} (plural accepted).`,
-		);
+		]);
 	}
 	return ms;
 }
@@ -73,7 +79,7 @@ export class Interval {
 	 */
 	private constructor(start: DateTime, end: DateTime) {
 		if (start.isAfter(end)) {
-			throw new Error("Interval start must be <= end");
+			throw new E_CHRONOS_INVALID_INTERVAL(["Interval start must be <= end"]);
 		}
 		this.#start = start;
 		this.#end = end;
@@ -130,7 +136,9 @@ export class Interval {
 		if (start && end) return new Interval(start, end);
 		if (start && e) return Interval.after(start, Duration.fromISO(e));
 		if (end && s) return Interval.before(end, Duration.fromISO(s));
-		throw new RangeError(`Invalid ISO 8601 interval: ${text}`);
+		throw new E_CHRONOS_INVALID_INTERVAL([
+			`Invalid ISO 8601 interval: ${text}`,
+		]);
 	}
 
 	// ─── Accessors ──────────────────────────────────────────
@@ -310,7 +318,9 @@ export class Interval {
 		}
 		const step = toDuration(duration);
 		if (step.as("milliseconds") <= 0) {
-			throw new Error("splitBy duration must be positive");
+			throw new E_CHRONOS_INVALID_DURATION([
+				"splitBy duration must be positive",
+			]);
 		}
 		const result: Interval[] = [];
 		let cursor = this.#start;

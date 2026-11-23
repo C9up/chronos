@@ -160,9 +160,11 @@ describe("chronos > easterDate", () => {
 	});
 
 	it("refuses a year outside the Gregorian computus", () => {
-		expect(() => easterDate(1582)).toThrow(/E_CHRONOS_INVALID_YEAR/);
-		expect(() => easterDate(10_000)).toThrow(/E_CHRONOS_INVALID_YEAR/);
-		expect(() => easterDate(2026.5)).toThrow(/E_CHRONOS_INVALID_YEAR/);
+		for (const year of [1582, 10_000, 2026.5]) {
+			expect(() => easterDate(year)).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_YEAR" }),
+			);
+		}
 	});
 });
 
@@ -247,14 +249,14 @@ describe("chronos > holidays", () => {
 		// Typed, but read from a request body or a settings row at runtime.
 		const fromJson = (text: string): HolidayOptions => JSON.parse(text);
 		expect(() => holidays(2026, fromJson('{"country":"DE"}'))).toThrow(
-			/E_CHRONOS_UNKNOWN_COUNTRY/,
+			expect.objectContaining({ code: "E_CHRONOS_UNKNOWN_COUNTRY" }),
 		);
 		expect(() =>
 			holidays(2026, fromJson('{"country":"CH","region":"vd"}')),
-		).toThrow(/E_CHRONOS_UNKNOWN_REGION/);
+		).toThrow(expect.objectContaining({ code: "E_CHRONOS_UNKNOWN_REGION" }));
 		expect(() =>
 			holidays(2026, fromJson('{"country":"FR","region":"IDF"}')),
-		).toThrow(/E_CHRONOS_UNKNOWN_REGION/);
+		).toThrow(expect.objectContaining({ code: "E_CHRONOS_UNKNOWN_REGION" }));
 	});
 });
 
@@ -280,10 +282,10 @@ describe("chronos > isHoliday", () => {
 
 	it("refuses a text that is not a calendar date", () => {
 		expect(() => isHoliday("2026-02-30", { country: "FR" })).toThrow(
-			/E_CHRONOS_INVALID_DATE/,
+			expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }),
 		);
 		expect(() => isHoliday("2026-07-14T10:00:00Z", { country: "FR" })).toThrow(
-			/E_CHRONOS_INVALID_DATE/,
+			expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }),
 		);
 	});
 });

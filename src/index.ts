@@ -30,6 +30,7 @@ export type {
 	DurationUnitLike,
 } from "./Duration.js";
 export { Duration } from "./Duration.js";
+export * as errors from "./errors.js";
 export type {
 	Holiday,
 	HolidayCountry,

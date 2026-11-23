@@ -304,7 +304,7 @@ describe("Luxon semantics chronos now shares", () => {
 		expect(fr.toFormat("EEEE d MMMM yyyy")).toBe("lundi 10 août 2026");
 		expect(fr.plus(1, "day").toFormat("cccc")).toBe("mardi");
 		expect(() => DateTime.from(t).setLocale("not a locale!")).toThrow(
-			RangeError,
+			expect.objectContaining({ code: "E_CHRONOS_INVALID_LOCALE" }),
 		);
 	});
 

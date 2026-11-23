@@ -53,14 +53,18 @@ describe("plus/minus validate the amount", () => {
 	it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
 		"refuses %s instead of treating it as 0",
 		(amount) => {
-			expect(() => base.plus(amount, "day")).toThrow(RangeError);
-			expect(() => base.minus(amount, "hour")).toThrow(RangeError);
+			expect(() => base.plus(amount, "day")).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_UNIT_VALUE" }),
+			);
+			expect(() => base.minus(amount, "hour")).toThrow(
+				expect.objectContaining({ code: "E_CHRONOS_INVALID_UNIT_VALUE" }),
+			);
 		},
 	);
 
 	it("refuses a value that is not a number", () => {
 		expect(() => Reflect.apply(base.plus, base, ["1", "day"])).toThrow(
-			RangeError,
+			expect.objectContaining({ code: "E_CHRONOS_INVALID_UNIT_VALUE" }),
 		);
 	});
 
@@ -137,7 +141,9 @@ describe("strings are read as ISO 8601, the same way on every host", () => {
 		" 2026-08-10",
 		"",
 	])("refuses %j", (text) => {
-		expect(() => new DateTime(text)).toThrow(RangeError);
+		expect(() => new DateTime(text)).toThrow(
+			expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }),
+		);
 	});
 
 	it("keeps the offset forms and fractions it should read", () => {
@@ -168,7 +174,13 @@ describe("values outside years 0000-9999 are refused at construction", () => {
 		() => DateTime.fromObject({ year: 10000, month: 1, day: 1 }),
 		() => DateTime.fromMillis(Number.NaN),
 	])("%#", (build) => {
-		expect(build).toThrow(RangeError);
+		expect(build).toThrow(
+			expect.objectContaining({
+				code: expect.stringMatching(
+					/^E_CHRONOS_(?:OUT_OF_RANGE|INVALID_DATE)$/,
+				),
+			}),
+		);
 	});
 
 	it("still holds both ends of the range", () => {
@@ -207,13 +219,13 @@ describe("fromObject validates every field", () => {
 	it("refuses a fractional or non-finite year, month or day", () => {
 		expect(() =>
 			DateTime.fromObject({ year: 2026.5, month: 6, day: 1 }),
-		).toThrow(RangeError);
+		).toThrow(expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }));
 		expect(() =>
 			DateTime.fromObject({ year: 2026, month: 6, day: 1.5 }),
-		).toThrow(RangeError);
+		).toThrow(expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }));
 		expect(() =>
 			DateTime.fromObject({ year: 2026, month: Number.NaN, day: 1 }),
-		).toThrow(RangeError);
+		).toThrow(expect.objectContaining({ code: "E_CHRONOS_INVALID_DATE" }));
 	});
 
 	it("builds a wall clock in a zone", () => {
