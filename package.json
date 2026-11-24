@@ -18,9 +18,9 @@
   },
   "files": [
     "LICENSE",
+    "THIRD-PARTY-NOTICES.md",
     "README.md",
     "dist",
-    "index.*.node",
     "src",
     "wasm"
   ],
@@ -29,6 +29,8 @@
     "build:rust": "cargo build --release",
     "build:napi": "cargo build --release && pnpm build:napi-types && node scripts/copy-napi.mjs",
     "build:napi-types": "node scripts/build-napi-types.mjs",
+    "platforms:sync": "node scripts/platform-packages.mjs",
+    "platforms:check": "node scripts/platform-packages.mjs --check",
     "test": "vitest run",
     "test:rust": "cargo test",
     "test:napi": "node scripts/verify-napi.mjs",
@@ -40,6 +42,13 @@
   },
   "dependencies": {
     "@c9up/flare": "^0.1.0"
+  },
+  "optionalDependencies": {
+    "@c9up/chronos-linux-x64-gnu": "0.1.18",
+    "@c9up/chronos-linux-arm64-gnu": "0.1.18",
+    "@c9up/chronos-darwin-x64": "0.1.18",
+    "@c9up/chronos-darwin-arm64": "0.1.18",
+    "@c9up/chronos-win32-x64-msvc": "0.1.18"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.8",

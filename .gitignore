@@ -8,6 +8,8 @@ dist/
 
 # NAPI prebuilt binary — produced by `pnpm build:napi` or CI.
 *.node
+# The publish job copies the licence into each platform package it publishes.
+npm/*/LICENSE
 
 # Compiled TS outputs — source-of-truth is src/*.ts, not the emitted JS/d.ts.
 src/**/*.js

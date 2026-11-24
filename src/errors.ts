@@ -4,13 +4,17 @@
  */
 import { createError } from "@c9up/flare";
 
-/** The engine (the NAPI binary in Node, the WASM build in a browser) did not load. */
-export const E_CHRONOS_ENGINE_REQUIRED = createError<[string, string]>(
+/**
+ * The engine (the NAPI binary in Node, the WASM build in a browser) did not
+ * load. In Node, the message names the platform package to install; the load
+ * error is the `cause`.
+ */
+export const E_CHRONOS_ENGINE_REQUIRED = createError<
+	[environment: string, fix: string]
+>(
 	"The Chronos engine is required but not loaded.\n" +
 		"  Environment: %s\n" +
-		"  Reason: %s\n" +
-		"  Fix (Node): cd packages/chronos && pnpm build:napi\n" +
-		"  Fix (Browser): cd packages/chronos && pnpm build:wasm",
+		"  Fix: %s",
 	"E_CHRONOS_ENGINE_REQUIRED",
 );
 

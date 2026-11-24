@@ -32,14 +32,69 @@ import {
  */
 export type NativeChronos = typeof import("./native/generated.js");
 
+/**
+ * The npm name the platform packages derive from: `@c9up/chronos-<suffix>`,
+ * one per target, each an optional dependency pinned to this version.
+ */
+const PACKAGE_NAME = "@c9up/chronos";
+
+/** Node's `platform-arch` → the suffix napi-rs builds under. */
+const NAPI_TARGETS: Record<string, string> = {
+	"linux-x64": "linux-x64-gnu",
+	"linux-arm64": "linux-arm64-gnu",
+	"darwin-x64": "darwin-x64",
+	"darwin-arm64": "darwin-arm64",
+	"win32-x64": "win32-x64-msvc",
+};
+
 let native: NativeChronos | undefined;
 let loadError: unknown;
+/** What to do about a missing engine, phrased for whoever has to fix it. */
+let unavailableFix = "cd packages/chronos && pnpm build:wasm";
 
 const isNode =
 	typeof globalThis.process !== "undefined" &&
 	typeof globalThis.process.versions?.node === "string";
 
+/** Whether `cause` is Node's "no such module" (and not a module that failed to load). */
+function isModuleNotFound(cause: unknown): boolean {
+	return (
+		cause instanceof Error && Reflect.get(cause, "code") === "MODULE_NOT_FOUND"
+	);
+}
+
+/**
+ * What to do about a NAPI engine that did not load.
+ *
+ * An application installs the platform package; a checkout of chronos builds
+ * the local binary. The load error itself is not in here: it names paths on
+ * the host, so it travels as the refusal's `cause` instead of its message.
+ */
+function nodeRemedy(
+	target: string,
+	suffix: string | undefined,
+	platformPackage: string | undefined,
+): string {
+	if (suffix === undefined) {
+		return `no prebuilt binary for ${target}; chronos ships one for ${Object.keys(NAPI_TARGETS).join(", ")}.`;
+	}
+	if (platformPackage === undefined) {
+		return `index.${suffix}.node failed to load. Rebuild it: cd packages/chronos && pnpm build:napi`;
+	}
+	const musl = target.startsWith("linux-")
+		? " On Alpine/musl, the gnu binary will not load — build the musl target."
+		: "";
+	return (
+		`install ${platformPackage} at the exact version of ${PACKAGE_NAME}: it is the optional dependency that carries the ${suffix} binary, ` +
+		"and an install that omits optional dependencies skips it. " +
+		`In a checkout of chronos, build it instead: pnpm build:napi.${musl}`
+	);
+}
+
 if (isNode) {
+	let target = "unknown";
+	let suffix: string | undefined;
+	let platformPackage: string | undefined;
 	try {
 		const { createRequire } = await import("node:module");
 		const { dirname, join } = await import("node:path");
@@ -48,22 +103,26 @@ if (isNode) {
 
 		const nodeRequire = createRequire(import.meta.url);
 		const currentDir = dirname(fileURLToPath(import.meta.url));
-
-		const platformMap: Record<string, string> = {
-			"linux-x64": "linux-x64-gnu",
-			"linux-arm64": "linux-arm64-gnu",
-			"darwin-x64": "darwin-x64",
-			"darwin-arm64": "darwin-arm64",
-			"win32-x64": "win32-x64-msvc",
-		};
-
-		const suffix = platformMap[`${platform}-${arch}`];
-		if (suffix) {
-			native = nodeRequire(join(currentDir, `../index.${suffix}.node`));
+		target = `${platform}-${arch}`;
+		suffix = NAPI_TARGETS[target];
+		if (suffix !== undefined) {
+			// The local file first: a checkout builds it there (`build:napi`), so
+			// tests run the Rust they just compiled. A published tarball carries
+			// no `.node` file, so an install falls through to the platform
+			// package its package manager picked for this host. A local file
+			// that exists but fails to load is a broken build, reported as is.
+			try {
+				native = nodeRequire(join(currentDir, `../index.${suffix}.node`));
+			} catch (cause) {
+				if (!isModuleNotFound(cause)) throw cause;
+				platformPackage = `${PACKAGE_NAME}-${suffix}`;
+				native = nodeRequire(platformPackage);
+			}
 		}
 	} catch (e) {
 		loadError = e;
 	}
+	unavailableFix = nodeRemedy(target, suffix, platformPackage);
 } else {
 	try {
 		// wasm-bindgen preserves Rust snake_case names (start_of, end_of, etc.)
@@ -187,10 +246,10 @@ let guardedEngine: NativeChronos | undefined;
 
 export function nativeChronos(): NativeChronos {
 	if (!native) {
-		throw new E_CHRONOS_ENGINE_REQUIRED([
-			isNode ? "Node" : "Browser",
-			String(loadError ?? "binary not found"),
-		]);
+		throw new E_CHRONOS_ENGINE_REQUIRED(
+			[isNode ? "Node" : "Browser", unavailableFix],
+			loadError === undefined ? undefined : { cause: loadError },
+		);
 	}
 	guardedEngine ??= guarded(native);
 	return guardedEngine;

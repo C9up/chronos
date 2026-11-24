@@ -10,7 +10,29 @@ Part of **[Ream](https://github.com/C9up/ream)**, and usable on its own: chronos
 pnpm add @c9up/chronos
 ```
 
-The Rust binary is required — there is no JavaScript fallback.
+The Rust engine is required — there is no JavaScript fallback. In Node, each platform's engine is its own npm package, which `@c9up/chronos` lists as an optional dependency at its exact version:
+
+| Platform | Package |
+|---|---|
+| Linux x64 (glibc) | `@c9up/chronos-linux-x64-gnu` |
+| Linux arm64 (glibc) | `@c9up/chronos-linux-arm64-gnu` |
+| macOS x64 | `@c9up/chronos-darwin-x64` |
+| macOS arm64 | `@c9up/chronos-darwin-arm64` |
+| Windows x64 | `@c9up/chronos-win32-x64-msvc` |
+
+Your package manager installs only the one that matches the machine (`os`, `cpu` and `libc` fields), so an install downloads one binary and needs no Rust toolchain. An install run with optional dependencies omitted (`--no-optional`, `--omit=optional`) skips it. In a browser, chronos runs the WASM build, which ships in `@c9up/chronos` itself.
+
+If the engine is missing, the first call throws `E_CHRONOS_ENGINE_REQUIRED`, naming the package to install:
+
+```text
+The Chronos engine is required but not loaded.
+  Environment: Node
+  Fix: install @c9up/chronos-linux-x64-gnu at the exact version of @c9up/chronos: ...
+```
+
+The load error itself is the exception's `cause`.
+
+In a checkout of this repository, `pnpm build:napi` builds `index.<platform>.node` at the package root, and chronos loads that file before looking for the platform package. `node scripts/platform-packages.mjs` rewrites the platform packages' manifests (`npm/<platform>/package.json`) and the optional dependencies after a version bump; CI fails when they are stale.
 
 ## DateTime
 
